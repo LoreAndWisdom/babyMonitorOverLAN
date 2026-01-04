@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Baby Monitor - Camera Feed</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 30px;
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+
+        .status {
+            text-align: center;
+            padding: 12px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .status.disconnected {
+            background: #fee;
+            color: #c33;
+        }
+
+        .status.connected {
+            background: #efe;
+            color: #3c3;
+        }
+
+        .status.streaming {
+            background: #eef;
+            color: #33c;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 10px;
+            background: #000;
+            margin-bottom: 20px;
+            transform: scaleX(-1);
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            flex: 1;
+            min-width: 120px;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-start {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-start:hover:not(:disabled) {
+            background: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.4);
+        }
+
+        .btn-stop {
+            background: #f44336;
+            color: white;
+        }
+
+        .btn-stop:hover:not(:disabled) {
+            background: #da190b;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(244, 67, 54, 0.4);
+        }
+
+        .btn-switch {
+            background: #2196F3;
+            color: white;
+        }
+
+        .btn-switch:hover:not(:disabled) {
+            background: #0b7dda;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(33, 150, 243, 0.4);
+        }
+
+        .info {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 10px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📹 Baby Monitor Camera</h1>
+
+        <div class="status disconnected" id="status">
+            Disconnected from server
+        </div>
+
+        <div class="error" id="error"></div>
+
+        <video id="video" autoplay playsinline muted></video>
+
+        <div class="controls">
+            <button class="btn-start" id="startBtn">Start Camera</button>
+            <button class="btn-stop" id="stopBtn" disabled>Stop Camera</button>
+            <button class="btn-switch" id="switchBtn" disabled>Switch Camera</button>
+        </div>
+
+        <div class="info">
+            <strong>📱 Instructions:</strong><br>
+            1. Click "Start Camera" to begin streaming<br>
+            2. Allow camera access when prompted<br>
+            3. View feeds from the admin panel<br>
+            4. Keep this page open to continue streaming
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const video = document.getElementById('video');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const switchBtn = document.getElementById('switchBtn');
+        const statusDiv = document.getElementById('status');
+        const errorDiv = document.getElementById('error');
+
+        let socket;
+        let mediaStream;
+        let mediaRecorder;
+        let currentFacingMode = 'user'; // Start with front camera
+
+        // Connect to Socket.IO server
+        function connectToServer() {
+            socket = io();
+
+            socket.on('connect', () => {
+                console.log('Connected to server');
+                updateStatus('connected', 'Connected to server');
+                socket.emit('identify', { type: 'camera' });
+            });
+
+            socket.on('disconnect', () => {
+                console.log('Disconnected from server');
+                updateStatus('disconnected', 'Disconnected from server');
+            });
+
+            socket.on('connect_error', (error) => {
+                console.error('Connection error:', error);
+                showError('Failed to connect to server. Please check your connection.');
+            });
+        }
+
+        // Update status display
+        function updateStatus(status, message) {
+            statusDiv.className = `status ${status}`;
+            statusDiv.textContent = message;
+        }
+
+        // Show error message
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.classList.add('show');
+            setTimeout(() => {
+                errorDiv.classList.remove('show');
+            }, 5000);
+        }
+
+        // Start camera and streaming
+        async function startCamera() {
+            try {
+                const constraints = {
+                    video: {
+                        facingMode: currentFacingMode,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                };
+
+                mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = mediaStream;
+
+                // Start streaming
+                startStreaming();
+
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                switchBtn.disabled = false;
+
+                updateStatus('streaming', '🔴 Streaming...');
+            } catch (error) {
+                console.error('Error accessing camera:', error);
+                showError('Could not access camera. Please check permissions.');
+            }
+        }
+
+        // Start streaming to server
+        function startStreaming() {
+            const options = {
+                mimeType: 'video/webm;codecs=vp8',
+                videoBitsPerSecond: 500000 // 500 kbps for better quality
+            };
+
+            try {
+                mediaRecorder = new MediaRecorder(mediaStream, options);
+            } catch (e) {
+                console.error('MediaRecorder error:', e);
+                // Fallback to default options
+                mediaRecorder = new MediaRecorder(mediaStream);
+            }
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0 && socket.connected) {
+                    // Convert blob to base64 and send
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        socket.emit('video-stream', reader.result);
+                    };
+                    reader.readAsDataURL(event.data);
+                }
+            };
+
+            // Send data every 100ms for smooth streaming
+            mediaRecorder.start(100);
+        }
+
+        // Stop camera and streaming
+        function stopCamera() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+
+            video.srcObject = null;
+
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            switchBtn.disabled = true;
+
+            updateStatus('connected', 'Connected to server');
+        }
+
+        // Switch between front and back camera
+        async function switchCamera() {
+            currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+            stopCamera();
+            await startCamera();
+        }
+
+        // Event listeners
+        startBtn.addEventListener('click', startCamera);
+        stopBtn.addEventListener('click', stopCamera);
+        switchBtn.addEventListener('click', switchCamera);
+
+        // Initialize connection
+        connectToServer();
+
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            stopCamera();
+            if (socket) {
+                socket.disconnect();
+            }
+        });
+    </script>
+</body>
+</html>
