@@ -26,23 +26,33 @@ git clone <repository-url>
 cd babyMonitorOverLAN
 ```
 
-2. Install dependencies and generate HTTPS certificates:
-```bash
-npm run setup
-```
-
-This will:
-- Install all required Node.js packages
-- Generate self-signed SSL certificates for HTTPS
-- Configure the server for mobile camera access
-
-**Alternative:** Run steps individually:
+2. Install dependencies:
 ```bash
 npm install
+```
+
+**That's it!** The server will automatically generate SSL certificates on first run.
+
+### Manual Certificate Generation (Optional)
+
+If you want to generate certificates before starting the server:
+```bash
 npm run generate-cert
 ```
 
+Or use the complete setup:
+```bash
+npm run setup  # Installs dependencies and generates certificates
+```
+
 **Note:** You need OpenSSL installed on your system. Most Linux/macOS systems have it pre-installed. For Windows, download from [slproweb.com](https://slproweb.com/products/Win32OpenSSL.html).
+
+### Automatic Certificate Management
+
+The server automatically manages SSL certificates:
+- ✅ **First run:** Generates certificates automatically
+- ✅ **IP changes:** Detects when your IP address changes and regenerates certificates
+- ✅ **No manual intervention:** Just run `npm start` and everything works
 
 ## Usage
 
@@ -202,14 +212,19 @@ babyMonitorOverLAN/
 3. Accept the security warning in your browser
 4. Example: `https://192.168.1.100:3443` (not `http://192.168.1.100:3000`)
 
-### Certificate Not Found Error
+### Certificate Issues
 
-If the server shows "HTTPS certificates not found":
+The server automatically handles certificates, but if you encounter issues:
+
+**Manual regeneration:**
 ```bash
 npm run generate-cert
 ```
 
-Then restart the server.
+The server will also automatically regenerate certificates if:
+- They don't exist
+- Your IP address has changed
+- They're missing current IP addresses
 
 ### Camera Not Working on Mobile
 
@@ -284,8 +299,9 @@ Potential future enhancements:
 - [ ] Two-way communication
 - [ ] Night mode
 - [ ] Multiple admin views
-- [ ] HTTPS support
 - [ ] Authentication system
+- [ ] Bandwidth optimization
+- [ ] Multi-camera split view
 
 ## Support
 
