@@ -140,8 +140,9 @@
             border-radius: 10px;
             background: #000;
             aspect-ratio: 16/9;
-            object-fit: cover;
+            object-fit: contain;
             transform: scaleX(-1);
+            display: block;
         }
 
         .no-video {
@@ -326,14 +327,12 @@
                 <div class="no-video" id="video-placeholder-${client.id}">
                     ⏳ Waiting for stream...
                 </div>
-                <video
+                <img
                     class="device-video"
                     id="video-${client.id}"
-                    autoplay
-                    playsinline
-                    muted
+                    alt="Camera feed"
                     style="display: none;"
-                ></video>
+                />
                 <div class="device-time">Connected: ${connectedTime}</div>
                 <button class="fullscreen-btn" onclick="toggleFullscreen('video-${client.id}')">⛶ Fullscreen</button>
             `;
@@ -345,10 +344,9 @@
 
             devicesContainer.appendChild(deviceCard);
 
-            // Create media source for this device
-            const video = document.getElementById(`video-${client.id}`);
-            const mediaSource = new MediaSource();
-            videoElements.set(client.id, { video, mediaSource, chunks: [] });
+            // Store reference to the image element
+            const img = document.getElementById(`video-${client.id}`);
+            videoElements.set(client.id, { img });
         }
 
         // Remove device from display
@@ -382,30 +380,17 @@
             const videoElement = videoElements.get(clientId);
             if (!videoElement) return;
 
-            const { video } = videoElement;
+            const { img } = videoElement;
             const placeholder = document.getElementById(`video-placeholder-${clientId}`);
 
-            // Hide placeholder and show video
-            if (placeholder) {
+            // Hide placeholder and show image on first frame
+            if (placeholder && placeholder.style.display !== 'none') {
                 placeholder.style.display = 'none';
+                img.style.display = 'block';
             }
-            video.style.display = 'block';
 
-            // Convert base64 to blob
-            fetch(videoData)
-                .then(res => res.blob())
-                .then(blob => {
-                    const url = URL.createObjectURL(blob);
-                    video.src = url;
-
-                    // Clean up old URL
-                    video.addEventListener('loadeddata', () => {
-                        URL.revokeObjectURL(url);
-                    }, { once: true });
-                })
-                .catch(err => {
-                    console.error('Error playing video:', err);
-                });
+            // Update image src with new frame
+            img.src = videoData;
         }
 
         // Update statistics

@@ -222,8 +222,10 @@
 
         let socket;
         let mediaStream;
-        let mediaRecorder;
+        let streamingInterval;
         let currentFacingMode = 'user'; // Start with front camera
+        let canvas;
+        let canvasContext;
 
         // Connect to Socket.IO server
         function connectToServer() {
@@ -337,38 +339,41 @@
 
         // Start streaming to server
         function startStreaming() {
-            const options = {
-                mimeType: 'video/webm;codecs=vp8',
-                videoBitsPerSecond: 500000 // 500 kbps for better quality
-            };
-
-            try {
-                mediaRecorder = new MediaRecorder(mediaStream, options);
-            } catch (e) {
-                console.error('MediaRecorder error:', e);
-                // Fallback to default options
-                mediaRecorder = new MediaRecorder(mediaStream);
+            // Create canvas for capturing frames
+            if (!canvas) {
+                canvas = document.createElement('canvas');
+                canvasContext = canvas.getContext('2d');
             }
 
-            mediaRecorder.ondataavailable = (event) => {
-                if (event.data && event.data.size > 0 && socket.connected) {
-                    // Convert blob to base64 and send
-                    const reader = new FileReader();
-                    reader.onloadend = () => {
-                        socket.emit('video-stream', reader.result);
-                    };
-                    reader.readAsDataURL(event.data);
-                }
-            };
+            // Capture and send frames
+            streamingInterval = setInterval(() => {
+                if (video.videoWidth > 0 && video.videoHeight > 0 && socket.connected) {
+                    // Set canvas size to match video
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
 
-            // Send data every 100ms for smooth streaming
-            mediaRecorder.start(100);
+                    // Draw current video frame to canvas
+                    canvasContext.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                    // Convert canvas to JPEG blob and send
+                    canvas.toBlob((blob) => {
+                        if (blob && socket.connected) {
+                            const reader = new FileReader();
+                            reader.onloadend = () => {
+                                socket.emit('video-stream', reader.result);
+                            };
+                            reader.readAsDataURL(blob);
+                        }
+                    }, 'image/jpeg', 0.7); // 0.7 quality for balance between quality and size
+                }
+            }, 100); // Send frame every 100ms (10 fps)
         }
 
         // Stop camera and streaming
         function stopCamera() {
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                mediaRecorder.stop();
+            if (streamingInterval) {
+                clearInterval(streamingInterval);
+                streamingInterval = null;
             }
 
             if (mediaStream) {
