@@ -231,6 +231,16 @@
         let audioContext;
         let audioMediaRecorder;
 
+        // VOX and Motion Detection variables
+        let thresholds = {
+            videoSensitivity: 15,
+            audioThreshold: 20
+        };
+        let previousFrame = null;
+        let currentStatus = 'idle'; // 'idle' or 'vox'
+        let audioAnalyser = null;
+        let audioDataArray = null;
+
         // Connect to Socket.IO server
         function connectToServer() {
             socket = io();
@@ -249,6 +259,11 @@
             socket.on('connect_error', (error) => {
                 console.error('Connection error:', error);
                 showError('Failed to connect to server. Please check your connection.');
+            });
+
+            socket.on('thresholds-update', (data) => {
+                console.log('Thresholds updated:', data);
+                thresholds = data;
             });
         }
 
@@ -342,6 +357,37 @@
             }
         }
 
+        // Detect motion by comparing frames
+        function detectMotion(currentImageData) {
+            if (!previousFrame) {
+                previousFrame = currentImageData;
+                return true; // First frame, always send
+            }
+
+            const current = currentImageData.data;
+            const previous = previousFrame.data;
+            let diffPixels = 0;
+            const totalPixels = current.length / 4;
+
+            // Compare pixels (sample every 4th pixel for performance)
+            for (let i = 0; i < current.length; i += 16) {
+                const rDiff = Math.abs(current[i] - previous[i]);
+                const gDiff = Math.abs(current[i + 1] - previous[i + 1]);
+                const bDiff = Math.abs(current[i + 2] - previous[i + 2]);
+                const avgDiff = (rDiff + gDiff + bDiff) / 3;
+
+                if (avgDiff > 25) { // Pixel changed significantly
+                    diffPixels++;
+                }
+            }
+
+            const changePercent = (diffPixels / (totalPixels / 4)) * 100;
+            const motionDetected = changePercent > (thresholds.videoSensitivity / 10);
+
+            previousFrame = currentImageData;
+            return motionDetected;
+        }
+
         // Start streaming to server
         function startStreaming() {
             // Create canvas for capturing frames
@@ -360,18 +406,75 @@
                     // Draw current video frame to canvas
                     canvasContext.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-                    // Convert canvas to JPEG blob and send
-                    canvas.toBlob((blob) => {
-                        if (blob && socket.connected) {
-                            const reader = new FileReader();
-                            reader.onloadend = () => {
-                                socket.emit('video-stream', reader.result);
-                            };
-                            reader.readAsDataURL(blob);
-                        }
-                    }, 'image/jpeg', 0.7); // 0.7 quality for balance between quality and size
+                    // Get image data for motion detection
+                    const imageData = canvasContext.getImageData(0, 0, canvas.width, canvas.height);
+                    const motionDetected = detectMotion(imageData);
+                    lastMotionDetected = motionDetected;
+
+                    // Only send if motion detected
+                    if (motionDetected) {
+                        // Convert canvas to JPEG blob and send
+                        canvas.toBlob((blob) => {
+                            if (blob && socket.connected) {
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                    socket.emit('video-stream', reader.result);
+                                };
+                                reader.readAsDataURL(blob);
+                            }
+                        }, 'image/jpeg', 0.7); // 0.7 quality for balance between quality and size
+                    }
                 }
-            }, 100); // Send frame every 100ms (10 fps)
+            }, 100); // Check every 100ms (10 fps)
+        }
+
+        // Detect voice activation (audio above threshold)
+        function detectVoiceActivity() {
+            if (!audioAnalyser || !audioDataArray) {
+                return false;
+            }
+
+            audioAnalyser.getByteFrequencyData(audioDataArray);
+
+            // Calculate average volume
+            let sum = 0;
+            for (let i = 0; i < audioDataArray.length; i++) {
+                sum += audioDataArray[i];
+            }
+            const average = sum / audioDataArray.length;
+
+            // Normalize to 0-100 scale and compare with threshold
+            const volumeLevel = (average / 255) * 100;
+            return volumeLevel > thresholds.audioThreshold;
+        }
+
+        // Check and update status (idle or vox)
+        let lastActivityTime = 0;
+        let lastMotionDetected = false;
+        let lastVoiceDetected = false;
+
+        function checkAndUpdateStatus() {
+            const voiceActive = detectVoiceActivity();
+            const now = Date.now();
+
+            // Determine if we have activity
+            const hasActivity = lastMotionDetected || voiceActive;
+
+            // Update status with some hysteresis (wait 2 seconds before going back to idle)
+            if (hasActivity) {
+                lastActivityTime = now;
+                if (currentStatus !== 'vox') {
+                    currentStatus = 'vox';
+                    socket.emit('camera-status', 'vox');
+                }
+            } else if (now - lastActivityTime > 2000) {
+                if (currentStatus !== 'idle') {
+                    currentStatus = 'idle';
+                    socket.emit('camera-status', 'idle');
+                }
+            }
+
+            lastVoiceDetected = voiceActive;
         }
 
         // Start audio streaming to server
@@ -386,6 +489,21 @@
 
                 // Create audio-only stream
                 const audioStream = new MediaStream([audioTrack]);
+
+                // Set up audio analyser for VOX detection
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                const source = audioContext.createMediaStreamSource(audioStream);
+                audioAnalyser = audioContext.createAnalyser();
+                audioAnalyser.fftSize = 256;
+                source.connect(audioAnalyser);
+                audioDataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+
+                // Start monitoring audio levels
+                setInterval(() => {
+                    checkAndUpdateStatus();
+                }, 200); // Check every 200ms
 
                 // Create MediaRecorder for audio
                 const options = {
@@ -402,12 +520,15 @@
 
                 audioMediaRecorder.ondataavailable = (event) => {
                     if (event.data && event.data.size > 0 && socket.connected) {
-                        // Convert blob to base64 and send
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                            socket.emit('audio-stream', reader.result);
-                        };
-                        reader.readAsDataURL(event.data);
+                        // Only send if voice is active
+                        if (lastVoiceDetected) {
+                            // Convert blob to base64 and send
+                            const reader = new FileReader();
+                            reader.onloadend = () => {
+                                socket.emit('audio-stream', reader.result);
+                            };
+                            reader.readAsDataURL(event.data);
+                        }
                     }
                 };
 

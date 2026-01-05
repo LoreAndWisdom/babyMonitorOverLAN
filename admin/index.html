@@ -302,6 +302,105 @@
         .audio-notice.show {
             display: block;
         }
+
+        .settings-panel {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .settings-panel h3 {
+            margin-bottom: 15px;
+            color: #b0b0ff;
+            font-size: 16px;
+        }
+
+        .settings-row {
+            display: flex;
+            gap: 30px;
+            flex-wrap: wrap;
+        }
+
+        .setting-item {
+            flex: 1;
+            min-width: 250px;
+        }
+
+        .setting-item label {
+            display: block;
+            margin-bottom: 8px;
+            color: #b0b0ff;
+            font-size: 14px;
+        }
+
+        .setting-item input[type="range"] {
+            width: 100%;
+            height: 4px;
+            border-radius: 2px;
+            background: rgba(255, 255, 255, 0.2);
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .setting-item input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4CAF50;
+            cursor: pointer;
+        }
+
+        .setting-item input[type="range"]::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4CAF50;
+            cursor: pointer;
+            border: none;
+        }
+
+        .setting-value {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 5px;
+            font-size: 12px;
+            color: #888;
+        }
+
+        .setting-value .current {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .device-status {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+
+        .device-status.idle {
+            background: rgba(128, 128, 128, 0.3);
+            color: #aaa;
+        }
+
+        .device-status.vox {
+            background: rgba(76, 175, 80, 0.3);
+            color: #4CAF50;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
     </style>
 </head>
 <body>
@@ -320,6 +419,30 @@
                 <strong id="totalDevices">0</strong>
             </div>
             <button class="refresh-btn" id="refreshBtn">🔄 Refresh</button>
+        </div>
+    </div>
+
+    <div class="settings-panel">
+        <h3>⚙️ VOX & Motion Detection Settings</h3>
+        <div class="settings-row">
+            <div class="setting-item">
+                <label for="videoSensitivity">Video Sensitivity (Motion Detection)</label>
+                <input type="range" id="videoSensitivity" min="1" max="100" value="15" oninput="updateVideoSensitivity(this.value)">
+                <div class="setting-value">
+                    <span>Low (1)</span>
+                    <span class="current" id="videoSensitivityValue">15</span>
+                    <span>High (100)</span>
+                </div>
+            </div>
+            <div class="setting-item">
+                <label for="audioThreshold">Audio Threshold (Voice Activation)</label>
+                <input type="range" id="audioThreshold" min="1" max="100" value="20" oninput="updateAudioThreshold(this.value)">
+                <div class="setting-value">
+                    <span>Quiet (1)</span>
+                    <span class="current" id="audioThresholdValue">20</span>
+                    <span>Loud (100)</span>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -412,7 +535,10 @@
             deviceCard.innerHTML = `
                 <div class="device-header">
                     <div class="device-info">
-                        <div class="device-id">📹 Camera ${devices.size}</div>
+                        <div class="device-id">
+                            📹 Camera ${devices.size}
+                            <span class="device-status idle" id="status-${client.id}">IDLE</span>
+                        </div>
                         <div class="device-ip">IP: ${client.ip}</div>
                     </div>
                     <div class="device-status"></div>
@@ -738,10 +864,45 @@
             }
         }
 
+        // Update video sensitivity threshold
+        function updateVideoSensitivity(value) {
+            document.getElementById('videoSensitivityValue').textContent = value;
+            socket.emit('update-thresholds', {
+                videoSensitivity: parseInt(value),
+                audioThreshold: parseInt(document.getElementById('audioThreshold').value)
+            });
+        }
+
+        // Update audio threshold
+        function updateAudioThreshold(value) {
+            document.getElementById('audioThresholdValue').textContent = value;
+            socket.emit('update-thresholds', {
+                videoSensitivity: parseInt(document.getElementById('videoSensitivity').value),
+                audioThreshold: parseInt(value)
+            });
+        }
+
+        // Update camera status display
+        function updateCameraStatus(clientId, status) {
+            const statusElement = document.getElementById(`status-${clientId}`);
+            if (statusElement) {
+                statusElement.textContent = status.toUpperCase();
+                statusElement.className = `device-status ${status}`;
+            }
+        }
+
+        // Listen for camera status updates
+        socket.on('camera-status', (data) => {
+            const { clientId, status } = data;
+            updateCameraStatus(clientId, status);
+        });
+
         // Make functions available globally
         window.toggleFullscreen = toggleFullscreen;
         window.toggleMute = toggleMute;
         window.setVolume = setVolume;
+        window.updateVideoSensitivity = updateVideoSensitivity;
+        window.updateAudioThreshold = updateAudioThreshold;
     </script>
 </body>
 </html>

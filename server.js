@@ -15,6 +15,12 @@ const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
 // Store connected clients
 const clients = new Map();
 
+// Store VOX/Motion detection thresholds
+const thresholds = {
+  videoSensitivity: 15,  // 1-100, higher = more sensitive
+  audioThreshold: 20     // 1-100, higher = louder sounds required
+};
+
 // Store Socket.IO instances for cross-server broadcasting
 let httpIO, httpsIO;
 
@@ -221,6 +227,9 @@ function setupSocketHandlers(io) {
         const clientData = clients.get(clientId);
         io.emit('camera-connected', clientData);
 
+        // Send current thresholds to the new camera
+        socket.emit('thresholds-update', thresholds);
+
         // Also notify admins on the other server
         if (io === httpIO && httpsIO) {
           httpsIO.emit('camera-connected', clientData);
@@ -272,6 +281,44 @@ function setupSocketHandlers(io) {
     socket.on('request-clients-list', () => {
       const cameraClients = Array.from(clients.values()).filter(c => c.type === 'camera');
       socket.emit('clients-list', cameraClients);
+    });
+
+    // Handle threshold updates from admin
+    socket.on('update-thresholds', (data) => {
+      thresholds.videoSensitivity = data.videoSensitivity;
+      thresholds.audioThreshold = data.audioThreshold;
+
+      console.log(`Thresholds updated: Video=${data.videoSensitivity}, Audio=${data.audioThreshold}`);
+
+      // Broadcast updated thresholds to all camera clients on both servers
+      const cameraClients = Array.from(clients.values()).filter(c => c.type === 'camera');
+      cameraClients.forEach(client => {
+        io.to(client.id).emit('thresholds-update', thresholds);
+      });
+
+      // Also notify cameras on the other server
+      if (io === httpIO && httpsIO) {
+        httpsIO.emit('thresholds-update', thresholds);
+      } else if (io === httpsIO && httpIO) {
+        httpIO.emit('thresholds-update', thresholds);
+      }
+    });
+
+    // Handle camera status updates (idle/vox)
+    socket.on('camera-status', (status) => {
+      const statusData = {
+        clientId: clientId,
+        status: status
+      };
+
+      // Broadcast status to all admin clients on both servers
+      io.emit('camera-status', statusData);
+
+      if (io === httpIO && httpsIO) {
+        httpsIO.emit('camera-status', statusData);
+      } else if (io === httpsIO && httpIO) {
+        httpIO.emit('camera-status', statusData);
+      }
     });
 
     // Handle disconnection
