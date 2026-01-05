@@ -456,25 +456,21 @@
 
             devicesContainer.appendChild(deviceCard);
 
-            // Store reference to the image element and create Web Audio API context
+            // Store reference to the image element
             const img = document.getElementById(`video-${client.id}`);
 
-            // Create AudioContext for this camera
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            const gainNode = audioContext.createGain();
-            gainNode.connect(audioContext.destination);
-            gainNode.gain.value = 0.8; // Default 80% volume
-
+            // Don't create AudioContext yet - wait for user gesture (unmute click)
             videoElements.set(client.id, {
                 img,
-                audioContext,
-                gainNode,
+                audioContext: null, // Will be created on user interaction
+                gainNode: null,
                 audioQueue: [],
                 isPlayingAudio: false,
                 isMuted: true, // Start muted to comply with autoplay policies
                 audioEnabled: false,
                 minBufferSize: 2, // Wait for 2 chunks before starting playback
-                currentSource: null // Track current AudioBufferSourceNode
+                currentSource: null, // Track current AudioBufferSourceNode
+                volume: 0.8 // Default 80% volume
             });
         }
 
@@ -693,19 +689,35 @@
             if (!element) return;
 
             element.isMuted = !element.isMuted;
-            element.audio.muted = element.isMuted;
 
             const muteBtn = document.getElementById(`mute-${clientId}`);
             if (element.isMuted) {
                 muteBtn.textContent = '🔇';
                 muteBtn.classList.add('muted');
-                element.audio.pause();
                 element.audioQueue = []; // Clear queue when muting
                 element.isPlayingAudio = false;
             } else {
                 muteBtn.textContent = '🔊';
                 muteBtn.classList.remove('muted');
                 hideAudioNotice(clientId);
+
+                // Create AudioContext on first unmute (user gesture required)
+                if (!element.audioContext) {
+                    try {
+                        element.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                        element.gainNode = element.audioContext.createGain();
+                        element.gainNode.connect(element.audioContext.destination);
+                        element.gainNode.gain.value = element.volume;
+                    } catch (e) {
+                        console.error('Failed to create AudioContext:', e);
+                        return;
+                    }
+                }
+
+                // Resume AudioContext if suspended
+                if (element.audioContext.state === 'suspended') {
+                    element.audioContext.resume();
+                }
 
                 // Try to start playing queued audio (with buffer check)
                 if (element.audioQueue.length >= element.minBufferSize && !element.isPlayingAudio) {
@@ -727,7 +739,12 @@
             if (!element) return;
 
             const volume = value / 100;
-            element.gainNode.gain.value = volume;
+            element.volume = volume;
+
+            // Update gain node if it exists (AudioContext created)
+            if (element.gainNode) {
+                element.gainNode.gain.value = volume;
+            }
 
             const volumeLabel = document.getElementById(`volume-label-${clientId}`);
             if (volumeLabel) {
