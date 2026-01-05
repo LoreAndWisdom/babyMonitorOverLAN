@@ -456,20 +456,25 @@
 
             devicesContainer.appendChild(deviceCard);
 
-            // Store reference to the image element and create audio element
+            // Store reference to the image element and create Web Audio API context
             const img = document.getElementById(`video-${client.id}`);
-            const audio = new Audio();
-            audio.volume = 0.8; // Default 80% volume
-            audio.autoplay = false; // Don't autoplay
+
+            // Create AudioContext for this camera
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const gainNode = audioContext.createGain();
+            gainNode.connect(audioContext.destination);
+            gainNode.gain.value = 0.8; // Default 80% volume
 
             videoElements.set(client.id, {
                 img,
-                audio,
+                audioContext,
+                gainNode,
                 audioQueue: [],
                 isPlayingAudio: false,
                 isMuted: true, // Start muted to comply with autoplay policies
                 audioEnabled: false,
-                minBufferSize: 2 // Wait for 2 chunks before starting playback
+                minBufferSize: 2, // Wait for 2 chunks before starting playback
+                currentSource: null // Track current AudioBufferSourceNode
             });
         }
 
@@ -478,6 +483,21 @@
             const deviceCard = document.getElementById(`device-${clientId}`);
             if (deviceCard) {
                 deviceCard.remove();
+            }
+
+            // Clean up audio resources
+            const element = videoElements.get(clientId);
+            if (element) {
+                if (element.currentSource) {
+                    try {
+                        element.currentSource.stop();
+                    } catch (e) {
+                        // Ignore if already stopped
+                    }
+                }
+                if (element.audioContext) {
+                    element.audioContext.close();
+                }
             }
 
             devices.delete(clientId);
@@ -540,12 +560,21 @@
             const element = videoElements.get(clientId);
             if (!element) return;
 
-            const { audio, audioQueue, isMuted } = element;
+            const { audioContext, gainNode, audioQueue, isMuted } = element;
 
             if (isMuted) {
                 // Clear queue if muted
                 element.audioQueue = [];
                 element.isPlayingAudio = false;
+                // Stop current audio source if playing
+                if (element.currentSource) {
+                    try {
+                        element.currentSource.stop();
+                    } catch (e) {
+                        // Ignore if already stopped
+                    }
+                    element.currentSource = null;
+                }
                 return;
             }
 
@@ -563,56 +592,54 @@
             element.isPlayingAudio = true;
             const audioData = audioQueue.shift();
 
-            // Convert base64 to blob and play
+            // Convert base64 to ArrayBuffer and decode with Web Audio API
             fetch(audioData)
-                .then(res => res.blob())
-                .then(blob => {
-                    const url = URL.createObjectURL(blob);
-                    audio.src = url;
+                .then(res => res.arrayBuffer())
+                .then(arrayBuffer => {
+                    return audioContext.decodeAudioData(arrayBuffer);
+                })
+                .then(audioBuffer => {
+                    // Create a buffer source node
+                    const source = audioContext.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(gainNode);
 
-                    const playPromise = audio.play();
-                    if (playPromise !== undefined) {
-                        playPromise
-                            .then(() => {
-                                // Playing started successfully
-                                element.audioEnabled = true;
-                                hideAudioNotice(clientId);
-                            })
-                            .catch(error => {
-                                console.error('Audio autoplay blocked:', error);
-                                // Show notice to user
-                                showAudioNotice(clientId);
-                                element.isPlayingAudio = false;
-                                // Retry after user interaction
-                                return;
-                            });
-                    }
+                    element.currentSource = source;
+                    element.audioEnabled = true;
+                    hideAudioNotice(clientId);
 
-                    // Clean up and play next chunk when this one ends
-                    audio.onended = () => {
-                        URL.revokeObjectURL(url);
+                    // Play next chunk when this one ends
+                    source.onended = () => {
+                        element.currentSource = null;
                         // Small delay to allow next chunk to arrive
                         setTimeout(() => {
                             playNextAudioChunk(clientId);
                         }, 10);
                     };
 
+                    // Start playback
+                    source.start(0);
+
                     // Fallback: if audio doesn't end naturally, try next chunk after expected duration
                     setTimeout(() => {
-                        if (element.isPlayingAudio && element.audioQueue.length > 0) {
-                            // If still marked as playing but we have chunks, something might be stuck
-                            if (audio.ended || audio.paused) {
-                                playNextAudioChunk(clientId);
+                        if (element.isPlayingAudio && element.audioQueue.length > 0 && element.currentSource === source) {
+                            // If we're still on this source, force next chunk
+                            try {
+                                source.stop();
+                            } catch (e) {
+                                // Ignore if already stopped
                             }
+                            element.currentSource = null;
+                            playNextAudioChunk(clientId);
                         }
-                    }, 600); // Slightly longer than chunk interval (500ms)
+                    }, 700); // Slightly longer than chunk interval (500ms)
                 })
                 .catch(err => {
-                    console.error('Error loading audio:', err);
+                    console.error('Error decoding audio:', err);
                     element.isPlayingAudio = false;
                     // Try next chunk
                     setTimeout(() => {
-                        if (element.audioQueue.length > 0) {
+                        if (element.audioQueue.length > 0 && !element.isMuted) {
                             playNextAudioChunk(clientId);
                         }
                     }, 100);
@@ -700,7 +727,7 @@
             if (!element) return;
 
             const volume = value / 100;
-            element.audio.volume = volume;
+            element.gainNode.gain.value = volume;
 
             const volumeLabel = document.getElementById(`volume-label-${clientId}`);
             if (volumeLabel) {
