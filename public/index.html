@@ -328,6 +328,7 @@
                 // Start streaming video and audio
                 startStreaming();
                 startAudioStreaming();
+                startStatusMonitoring(); // Start monitoring for VOX status
 
                 startBtn.disabled = true;
                 stopBtn.disabled = false;
@@ -361,7 +362,7 @@
         function detectMotion(currentImageData) {
             if (!previousFrame) {
                 previousFrame = currentImageData;
-                return true; // First frame, always send
+                return false; // First frame, don't detect motion yet
             }
 
             const current = currentImageData.data;
@@ -376,13 +377,20 @@
                 const bDiff = Math.abs(current[i + 2] - previous[i + 2]);
                 const avgDiff = (rDiff + gDiff + bDiff) / 3;
 
-                if (avgDiff > 25) { // Pixel changed significantly
+                // Increased threshold to reduce noise sensitivity
+                if (avgDiff > 40) { // Pixel changed significantly
                     diffPixels++;
                 }
             }
 
             const changePercent = (diffPixels / (totalPixels / 4)) * 100;
-            const motionDetected = changePercent > (thresholds.videoSensitivity / 10);
+
+            // Higher sensitivity = lower threshold (more sensitive)
+            // Sensitivity 1: threshold = 20% change
+            // Sensitivity 50: threshold = 5% change
+            // Sensitivity 100: threshold = 0.5% change
+            const threshold = 20 - (thresholds.videoSensitivity * 0.19);
+            const motionDetected = changePercent > threshold;
 
             previousFrame = currentImageData;
             return motionDetected;
@@ -465,16 +473,29 @@
                 lastActivityTime = now;
                 if (currentStatus !== 'vox') {
                     currentStatus = 'vox';
-                    socket.emit('camera-status', 'vox');
+                    if (socket && socket.connected) {
+                        socket.emit('camera-status', 'vox');
+                        console.log('Status: VOX');
+                    }
                 }
             } else if (now - lastActivityTime > 2000) {
                 if (currentStatus !== 'idle') {
                     currentStatus = 'idle';
-                    socket.emit('camera-status', 'idle');
+                    if (socket && socket.connected) {
+                        socket.emit('camera-status', 'idle');
+                        console.log('Status: IDLE');
+                    }
                 }
             }
 
             lastVoiceDetected = voiceActive;
+        }
+
+        // Start status monitoring (independent of audio)
+        function startStatusMonitoring() {
+            setInterval(() => {
+                checkAndUpdateStatus();
+            }, 200); // Check every 200ms
         }
 
         // Start audio streaming to server
@@ -500,11 +521,6 @@
                 source.connect(audioAnalyser);
                 audioDataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
 
-                // Start monitoring audio levels
-                setInterval(() => {
-                    checkAndUpdateStatus();
-                }, 200); // Check every 200ms
-
                 // Create MediaRecorder for audio
                 const options = {
                     mimeType: 'audio/webm;codecs=opus',
@@ -520,15 +536,12 @@
 
                 audioMediaRecorder.ondataavailable = (event) => {
                     if (event.data && event.data.size > 0 && socket.connected) {
-                        // Only send if voice is active
-                        if (lastVoiceDetected) {
-                            // Convert blob to base64 and send
-                            const reader = new FileReader();
-                            reader.onloadend = () => {
-                                socket.emit('audio-stream', reader.result);
-                            };
-                            reader.readAsDataURL(event.data);
-                        }
+                        // Always send audio (VOX only affects video and status)
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            socket.emit('audio-stream', reader.result);
+                        };
+                        reader.readAsDataURL(event.data);
                     }
                 };
 
