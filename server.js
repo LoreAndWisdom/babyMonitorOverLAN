@@ -18,16 +18,74 @@ const clients = new Map();
 // Store Socket.IO instances for cross-server broadcasting
 let httpIO, httpsIO;
 
+// Middleware to restrict admin access to localhost only
+function restrictToLocalhost(req, res, next) {
+  const clientIP = req.ip || req.connection.remoteAddress;
+  const normalizedIP = clientIP.replace(/^::ffff:/, ''); // Remove IPv6 prefix if present
+
+  // Allow localhost in various forms
+  const allowedIPs = ['127.0.0.1', '::1', 'localhost'];
+  const isLocalhost = allowedIPs.some(ip => normalizedIP === ip || normalizedIP.startsWith(ip));
+
+  if (isLocalhost) {
+    next();
+  } else {
+    console.log(`⚠️  Blocked admin access attempt from: ${clientIP}`);
+    res.status(403).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Access Denied</title>
+        <style>
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+          }
+          .container {
+            text-align: center;
+            padding: 40px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            max-width: 600px;
+          }
+          h1 { font-size: 48px; margin-bottom: 20px; }
+          p { font-size: 18px; line-height: 1.6; }
+          .icon { font-size: 80px; margin-bottom: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="icon">🔒</div>
+          <h1>Access Denied</h1>
+          <p>The admin panel can only be accessed from the server machine (localhost).</p>
+          <p>Your IP: ${clientIP}</p>
+          <p><strong>To access the admin panel:</strong><br>
+          Open your browser on the server machine and visit:<br>
+          http://localhost:${PORT}/admin or https://localhost:${HTTPS_PORT}/admin</p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+}
+
 // Serve static files
 app.use(express.static('public'));
-app.use('/admin', express.static('admin'));
+app.use('/admin', restrictToLocalhost, express.static('admin'));
 
 // Routes
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.get('/admin', (req, res) => {
+app.get('/admin', restrictToLocalhost, (req, res) => {
   res.sendFile(path.join(__dirname, 'admin', 'index.html'));
 });
 
@@ -250,13 +308,11 @@ httpServer.listen(PORT, () => {
   console.log('\nFor testing on the same device (HTTP works):');
   console.log(`  http://localhost:${PORT}`);
 
-  console.log('\nAdmin panel (works on HTTP):');
-  if (localIPs.length > 0) {
-    localIPs.forEach(ip => {
-      console.log(`  http://${ip}:${PORT}/admin`);
-      console.log(`  https://${ip}:${HTTPS_PORT}/admin`);
-    });
-  }
+  console.log('\nAdmin panel (localhost only - for security):');
+  console.log(`  http://localhost:${PORT}/admin`);
+  console.log(`  https://localhost:${HTTPS_PORT}/admin`);
+  console.log('\n💡 Note: Admin panel is restricted to localhost for security.');
+  console.log('   Open your browser on this server machine to access it.');
 });
 
 // Ensure certificates are generated and valid
