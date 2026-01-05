@@ -468,7 +468,8 @@
                 audioQueue: [],
                 isPlayingAudio: false,
                 isMuted: true, // Start muted to comply with autoplay policies
-                audioEnabled: false
+                audioEnabled: false,
+                minBufferSize: 2 // Wait for 2 chunks before starting playback
             });
         }
 
@@ -521,15 +522,15 @@
             const element = videoElements.get(clientId);
             if (!element) return;
 
-            const { audio, audioQueue, isPlayingAudio, isMuted } = element;
+            const { audioQueue, isPlayingAudio, isMuted, minBufferSize } = element;
 
             if (isMuted) return; // Skip if muted
 
             // Add audio chunk to queue
             audioQueue.push(audioData);
 
-            // Start playing if not already playing
-            if (!element.isPlayingAudio) {
+            // Start playing if not already playing and we have enough buffered
+            if (!isPlayingAudio && audioQueue.length >= minBufferSize) {
                 playNextAudioChunk(clientId);
             }
         }
@@ -541,15 +542,21 @@
 
             const { audio, audioQueue, isMuted } = element;
 
-            if (audioQueue.length === 0) {
-                element.isPlayingAudio = false;
-                return;
-            }
-
             if (isMuted) {
                 // Clear queue if muted
                 element.audioQueue = [];
                 element.isPlayingAudio = false;
+                return;
+            }
+
+            if (audioQueue.length === 0) {
+                element.isPlayingAudio = false;
+                // Try again after a short delay in case more chunks arrive
+                setTimeout(() => {
+                    if (!element.isMuted && element.audioQueue.length > 0 && !element.isPlayingAudio) {
+                        playNextAudioChunk(clientId);
+                    }
+                }, 100);
                 return;
             }
 
@@ -576,18 +583,39 @@
                                 // Show notice to user
                                 showAudioNotice(clientId);
                                 element.isPlayingAudio = false;
+                                // Retry after user interaction
+                                return;
                             });
                     }
 
                     // Clean up and play next chunk when this one ends
                     audio.onended = () => {
                         URL.revokeObjectURL(url);
-                        playNextAudioChunk(clientId);
+                        // Small delay to allow next chunk to arrive
+                        setTimeout(() => {
+                            playNextAudioChunk(clientId);
+                        }, 10);
                     };
+
+                    // Fallback: if audio doesn't end naturally, try next chunk after expected duration
+                    setTimeout(() => {
+                        if (element.isPlayingAudio && element.audioQueue.length > 0) {
+                            // If still marked as playing but we have chunks, something might be stuck
+                            if (audio.ended || audio.paused) {
+                                playNextAudioChunk(clientId);
+                            }
+                        }
+                    }, 600); // Slightly longer than chunk interval (500ms)
                 })
                 .catch(err => {
                     console.error('Error loading audio:', err);
                     element.isPlayingAudio = false;
+                    // Try next chunk
+                    setTimeout(() => {
+                        if (element.audioQueue.length > 0) {
+                            playNextAudioChunk(clientId);
+                        }
+                    }, 100);
                 });
         }
 
@@ -652,9 +680,16 @@
                 muteBtn.classList.remove('muted');
                 hideAudioNotice(clientId);
 
-                // Try to start playing queued audio
-                if (element.audioQueue.length > 0 && !element.isPlayingAudio) {
+                // Try to start playing queued audio (with buffer check)
+                if (element.audioQueue.length >= element.minBufferSize && !element.isPlayingAudio) {
                     playNextAudioChunk(clientId);
+                } else if (element.audioQueue.length > 0 && element.audioQueue.length < element.minBufferSize) {
+                    // Wait a bit for more chunks to arrive
+                    setTimeout(() => {
+                        if (!element.isMuted && element.audioQueue.length > 0 && !element.isPlayingAudio) {
+                            playNextAudioChunk(clientId);
+                        }
+                    }, 200);
                 }
             }
         }
