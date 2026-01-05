@@ -286,6 +286,21 @@
             color: #b0b0ff;
             min-width: 35px;
         }
+
+        .audio-notice {
+            background: rgba(255, 193, 7, 0.2);
+            border: 1px solid rgba(255, 193, 7, 0.5);
+            color: #ffc107;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-top: 8px;
+            display: none;
+        }
+
+        .audio-notice.show {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -411,8 +426,11 @@
                     style="display: none;"
                 />
                 <div class="device-time">Connected: ${connectedTime}</div>
+                <div class="audio-notice" id="audio-notice-${client.id}">
+                    🔊 Click unmute to enable audio
+                </div>
                 <div class="audio-controls">
-                    <button class="mute-btn" id="mute-${client.id}" onclick="toggleMute('${client.id}')">🔊</button>
+                    <button class="mute-btn muted" id="mute-${client.id}" onclick="toggleMute('${client.id}')">🔇</button>
                     <div class="volume-control">
                         <span class="volume-label">Vol:</span>
                         <input
@@ -442,13 +460,15 @@
             const img = document.getElementById(`video-${client.id}`);
             const audio = new Audio();
             audio.volume = 0.8; // Default 80% volume
+            audio.autoplay = false; // Don't autoplay
 
             videoElements.set(client.id, {
                 img,
                 audio,
                 audioQueue: [],
                 isPlayingAudio: false,
-                isMuted: false
+                isMuted: true, // Start muted to comply with autoplay policies
+                audioEnabled: false
             });
         }
 
@@ -519,9 +539,16 @@
             const element = videoElements.get(clientId);
             if (!element) return;
 
-            const { audio, audioQueue } = element;
+            const { audio, audioQueue, isMuted } = element;
 
             if (audioQueue.length === 0) {
+                element.isPlayingAudio = false;
+                return;
+            }
+
+            if (isMuted) {
+                // Clear queue if muted
+                element.audioQueue = [];
                 element.isPlayingAudio = false;
                 return;
             }
@@ -541,9 +568,14 @@
                         playPromise
                             .then(() => {
                                 // Playing started successfully
+                                element.audioEnabled = true;
+                                hideAudioNotice(clientId);
                             })
                             .catch(error => {
-                                console.error('Error playing audio:', error);
+                                console.error('Audio autoplay blocked:', error);
+                                // Show notice to user
+                                showAudioNotice(clientId);
+                                element.isPlayingAudio = false;
                             });
                     }
 
@@ -557,6 +589,22 @@
                     console.error('Error loading audio:', err);
                     element.isPlayingAudio = false;
                 });
+        }
+
+        // Show audio notice
+        function showAudioNotice(clientId) {
+            const notice = document.getElementById(`audio-notice-${clientId}`);
+            if (notice) {
+                notice.classList.add('show');
+            }
+        }
+
+        // Hide audio notice
+        function hideAudioNotice(clientId) {
+            const notice = document.getElementById(`audio-notice-${clientId}`);
+            if (notice) {
+                notice.classList.remove('show');
+            }
         }
 
         // Update statistics
@@ -598,9 +646,16 @@
                 muteBtn.classList.add('muted');
                 element.audio.pause();
                 element.audioQueue = []; // Clear queue when muting
+                element.isPlayingAudio = false;
             } else {
                 muteBtn.textContent = '🔊';
                 muteBtn.classList.remove('muted');
+                hideAudioNotice(clientId);
+
+                // Try to start playing queued audio
+                if (element.audioQueue.length > 0 && !element.isPlayingAudio) {
+                    playNextAudioChunk(clientId);
+                }
             }
         }
 
