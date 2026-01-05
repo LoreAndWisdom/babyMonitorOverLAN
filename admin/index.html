@@ -459,17 +459,22 @@
             // Store reference to the image element
             const img = document.getElementById(`video-${client.id}`);
 
-            // Don't create AudioContext yet - wait for user gesture (unmute click)
+            // Create audio element for MediaSource Extensions
+            const audio = new Audio();
+            audio.volume = 0.8; // Default 80% volume
+            audio.muted = true; // Start muted
+
             videoElements.set(client.id, {
                 img,
-                audioContext: null, // Will be created on user interaction
-                gainNode: null,
+                audio,
+                mediaSource: null, // Will be created on user interaction
+                sourceBuffer: null,
                 audioQueue: [],
                 isPlayingAudio: false,
                 isMuted: true, // Start muted to comply with autoplay policies
                 audioEnabled: false,
-                minBufferSize: 2, // Wait for 2 chunks before starting playback
-                currentSource: null, // Track current AudioBufferSourceNode
+                sourceBufferReady: false,
+                appendingChunk: false, // Track if we're currently appending
                 volume: 0.8 // Default 80% volume
             });
         }
@@ -484,15 +489,16 @@
             // Clean up audio resources
             const element = videoElements.get(clientId);
             if (element) {
-                if (element.currentSource) {
-                    try {
-                        element.currentSource.stop();
-                    } catch (e) {
-                        // Ignore if already stopped
-                    }
+                if (element.audio) {
+                    element.audio.pause();
+                    element.audio.src = '';
                 }
-                if (element.audioContext) {
-                    element.audioContext.close();
+                if (element.mediaSource && element.mediaSource.readyState === 'open') {
+                    try {
+                        element.mediaSource.endOfStream();
+                    } catch (e) {
+                        // Ignore if already ended
+                    }
                 }
             }
 
@@ -538,107 +544,77 @@
             const element = videoElements.get(clientId);
             if (!element) return;
 
-            const { audioQueue, isPlayingAudio, isMuted, minBufferSize } = element;
-
-            if (isMuted) return; // Skip if muted
-
             // Add audio chunk to queue
-            audioQueue.push(audioData);
+            element.audioQueue.push(audioData);
 
-            // Start playing if not already playing and we have enough buffered
-            if (!isPlayingAudio && audioQueue.length >= minBufferSize) {
-                playNextAudioChunk(clientId);
+            // Process the queue if not muted and source buffer is ready
+            if (!element.isMuted && element.sourceBufferReady) {
+                processAudioQueue(clientId);
             }
         }
 
         // Play next audio chunk from queue
-        function playNextAudioChunk(clientId) {
+        function processAudioQueue(clientId) {
             const element = videoElements.get(clientId);
             if (!element) return;
 
-            const { audioContext, gainNode, audioQueue, isMuted } = element;
+            const { sourceBuffer, audioQueue, isMuted, sourceBufferReady, appendingChunk } = element;
 
-            if (isMuted) {
-                // Clear queue if muted
-                element.audioQueue = [];
-                element.isPlayingAudio = false;
-                // Stop current audio source if playing
-                if (element.currentSource) {
-                    try {
-                        element.currentSource.stop();
-                    } catch (e) {
-                        // Ignore if already stopped
-                    }
-                    element.currentSource = null;
-                }
+            // Don't process if muted, source buffer not ready, or currently appending
+            if (isMuted || !sourceBufferReady || !sourceBuffer || appendingChunk) {
                 return;
             }
 
+            // Check if SourceBuffer is ready to accept more data
+            if (sourceBuffer.updating) {
+                return;
+            }
+
+            // No more chunks to process
             if (audioQueue.length === 0) {
-                element.isPlayingAudio = false;
-                // Try again after a short delay in case more chunks arrive
-                setTimeout(() => {
-                    if (!element.isMuted && element.audioQueue.length > 0 && !element.isPlayingAudio) {
-                        playNextAudioChunk(clientId);
-                    }
-                }, 100);
                 return;
             }
 
-            element.isPlayingAudio = true;
+            // Get next chunk and append to SourceBuffer
             const audioData = audioQueue.shift();
+            element.appendingChunk = true;
 
-            // Convert base64 to ArrayBuffer and decode with Web Audio API
+            // Convert base64 to ArrayBuffer and append to SourceBuffer
             fetch(audioData)
                 .then(res => res.arrayBuffer())
                 .then(arrayBuffer => {
-                    return audioContext.decodeAudioData(arrayBuffer);
-                })
-                .then(audioBuffer => {
-                    // Create a buffer source node
-                    const source = audioContext.createBufferSource();
-                    source.buffer = audioBuffer;
-                    source.connect(gainNode);
+                    if (sourceBuffer && !sourceBuffer.updating && element.mediaSource.readyState === 'open') {
+                        try {
+                            sourceBuffer.appendBuffer(arrayBuffer);
 
-                    element.currentSource = source;
-                    element.audioEnabled = true;
-                    hideAudioNotice(clientId);
+                            // Manage buffer size - remove old data if buffer gets too large
+                            if (sourceBuffer.buffered.length > 0) {
+                                const bufferedEnd = sourceBuffer.buffered.end(0);
+                                const currentTime = element.audio.currentTime;
 
-                    // Play next chunk when this one ends
-                    source.onended = () => {
-                        element.currentSource = null;
-                        // Small delay to allow next chunk to arrive
-                        setTimeout(() => {
-                            playNextAudioChunk(clientId);
-                        }, 10);
-                    };
-
-                    // Start playback
-                    source.start(0);
-
-                    // Fallback: if audio doesn't end naturally, try next chunk after expected duration
-                    setTimeout(() => {
-                        if (element.isPlayingAudio && element.audioQueue.length > 0 && element.currentSource === source) {
-                            // If we're still on this source, force next chunk
-                            try {
-                                source.stop();
-                            } catch (e) {
-                                // Ignore if already stopped
+                                // Keep only last 30 seconds of buffer
+                                if (bufferedEnd - currentTime > 30) {
+                                    const removeEnd = currentTime - 5;
+                                    if (removeEnd > 0) {
+                                        sourceBuffer.remove(0, removeEnd);
+                                    }
+                                }
                             }
-                            element.currentSource = null;
-                            playNextAudioChunk(clientId);
+                        } catch (e) {
+                            console.error('Error appending audio chunk:', e);
+                            element.appendingChunk = false;
+                            // Try processing next chunk
+                            setTimeout(() => processAudioQueue(clientId), 100);
                         }
-                    }, 700); // Slightly longer than chunk interval (500ms)
+                    } else {
+                        element.appendingChunk = false;
+                    }
                 })
                 .catch(err => {
-                    console.error('Error decoding audio:', err);
-                    element.isPlayingAudio = false;
-                    // Try next chunk
-                    setTimeout(() => {
-                        if (element.audioQueue.length > 0 && !element.isMuted) {
-                            playNextAudioChunk(clientId);
-                        }
-                    }, 100);
+                    console.error('Error loading audio chunk:', err);
+                    element.appendingChunk = false;
+                    // Try processing next chunk
+                    setTimeout(() => processAudioQueue(clientId), 100);
                 });
         }
 
@@ -694,41 +670,54 @@
             if (element.isMuted) {
                 muteBtn.textContent = '🔇';
                 muteBtn.classList.add('muted');
+                element.audio.muted = true;
                 element.audioQueue = []; // Clear queue when muting
-                element.isPlayingAudio = false;
             } else {
                 muteBtn.textContent = '🔊';
                 muteBtn.classList.remove('muted');
                 hideAudioNotice(clientId);
 
-                // Create AudioContext on first unmute (user gesture required)
-                if (!element.audioContext) {
+                // Unmute the audio element
+                element.audio.muted = false;
+                element.audio.volume = element.volume;
+
+                // Create MediaSource on first unmute (user gesture required)
+                if (!element.mediaSource) {
                     try {
-                        element.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                        element.gainNode = element.audioContext.createGain();
-                        element.gainNode.connect(element.audioContext.destination);
-                        element.gainNode.gain.value = element.volume;
+                        element.mediaSource = new MediaSource();
+                        element.audio.src = URL.createObjectURL(element.mediaSource);
+
+                        element.mediaSource.addEventListener('sourceopen', () => {
+                            if (element.mediaSource.readyState === 'open') {
+                                try {
+                                    element.sourceBuffer = element.mediaSource.addSourceBuffer('audio/webm;codecs=opus');
+                                    element.sourceBufferReady = true;
+
+                                    // Handle when chunk is done appending
+                                    element.sourceBuffer.addEventListener('updateend', () => {
+                                        element.appendingChunk = false;
+                                        processAudioQueue(clientId);
+                                    });
+
+                                    // Start processing queued chunks
+                                    processAudioQueue(clientId);
+                                } catch (e) {
+                                    console.error('Failed to create SourceBuffer:', e);
+                                }
+                            }
+                        });
                     } catch (e) {
-                        console.error('Failed to create AudioContext:', e);
+                        console.error('Failed to create MediaSource:', e);
                         return;
                     }
                 }
 
-                // Resume AudioContext if suspended
-                if (element.audioContext.state === 'suspended') {
-                    element.audioContext.resume();
-                }
-
-                // Try to start playing queued audio (with buffer check)
-                if (element.audioQueue.length >= element.minBufferSize && !element.isPlayingAudio) {
-                    playNextAudioChunk(clientId);
-                } else if (element.audioQueue.length > 0 && element.audioQueue.length < element.minBufferSize) {
-                    // Wait a bit for more chunks to arrive
-                    setTimeout(() => {
-                        if (!element.isMuted && element.audioQueue.length > 0 && !element.isPlayingAudio) {
-                            playNextAudioChunk(clientId);
-                        }
-                    }, 200);
+                // Start playback if not already playing
+                if (element.audio.paused) {
+                    element.audio.play().catch(err => {
+                        console.error('Failed to play audio:', err);
+                        showAudioNotice(clientId);
+                    });
                 }
             }
         }
@@ -740,11 +729,7 @@
 
             const volume = value / 100;
             element.volume = volume;
-
-            // Update gain node if it exists (AudioContext created)
-            if (element.gainNode) {
-                element.gainNode.gain.value = volume;
-            }
+            element.audio.volume = volume;
 
             const volumeLabel = document.getElementById(`volume-label-${clientId}`);
             if (volumeLabel) {
