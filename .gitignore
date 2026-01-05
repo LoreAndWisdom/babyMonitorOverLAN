@@ -3,3 +3,7 @@ npm-debug.log
 .DS_Store
 .env
 *.log
+certs/
+*.pem
+*.crt
+*.key

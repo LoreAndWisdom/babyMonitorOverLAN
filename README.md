@@ -26,10 +26,23 @@ git clone <repository-url>
 cd babyMonitorOverLAN
 ```
 
-2. Install dependencies:
+2. Install dependencies and generate HTTPS certificates:
+```bash
+npm run setup
+```
+
+This will:
+- Install all required Node.js packages
+- Generate self-signed SSL certificates for HTTPS
+- Configure the server for mobile camera access
+
+**Alternative:** Run steps individually:
 ```bash
 npm install
+npm run generate-cert
 ```
+
+**Note:** You need OpenSSL installed on your system. Most Linux/macOS systems have it pre-installed. For Windows, download from [slproweb.com](https://slproweb.com/products/Win32OpenSSL.html).
 
 ## Usage
 
@@ -46,24 +59,38 @@ npm start
 Baby Monitor LAN Server Running
 =================================
 
-Server started on port 3000
+HTTP Server started on port 3000
 
-Access the camera client from mobile devices at:
-  http://192.168.1.100:3000
+⚠️  WARNING: Camera access requires HTTPS on mobile browsers!
 
-Access the admin panel at:
-  http://192.168.1.100:3000/admin
+For mobile devices, use HTTPS:
+  https://192.168.1.100:3443
 
+✅ HTTPS Server started on port 3443
+Self-signed certificate found - mobile camera access enabled!
+
+Note: You will need to accept the security warning in your browser.
 =================================
 ```
 
+**Important:** Mobile devices must use the HTTPS URL (port 3443) to access the camera!
+
 ### Setting Up Mobile Camera
 
-1. On your mobile device, open a web browser
-2. Navigate to the camera client URL (e.g., `http://192.168.1.100:3000`)
-3. Click "Start Camera"
-4. Grant camera permissions when prompted
-5. The device will start streaming to the server
+1. On your mobile device, open a web browser (Chrome or Safari recommended)
+2. Navigate to the **HTTPS** camera client URL (e.g., `https://192.168.1.100:3443`)
+3. **Accept the security warning** (this is normal for self-signed certificates):
+   - **Chrome (Android):** Tap "Advanced" → "Proceed to [IP] (unsafe)"
+   - **Safari (iOS):** Tap "Show Details" → "visit this website"
+   - **Firefox (Android):** Tap "Advanced" → "Accept the Risk and Continue"
+4. Click "Start Camera"
+5. Grant camera permissions when prompted
+6. The device will start streaming to the server
+
+**Troubleshooting:** If you see "HTTPS Required" warning:
+- Make sure you're using `https://` (not `http://`)
+- Use port 3443 (not 3000)
+- Accept the certificate warning first
 
 **Camera Controls:**
 - **Start Camera** - Begin streaming video
@@ -165,12 +192,33 @@ babyMonitorOverLAN/
 
 ## Troubleshooting
 
+### "HTTPS Required" Error on Mobile
+
+**This is the most common issue!** Mobile browsers require HTTPS for camera access.
+
+**Solution:**
+1. Use `https://` instead of `http://`
+2. Use port 3443 instead of 3000
+3. Accept the security warning in your browser
+4. Example: `https://192.168.1.100:3443` (not `http://192.168.1.100:3000`)
+
+### Certificate Not Found Error
+
+If the server shows "HTTPS certificates not found":
+```bash
+npm run generate-cert
+```
+
+Then restart the server.
+
 ### Camera Not Working on Mobile
 
-- Ensure you're using HTTPS or localhost (required for camera access)
-- Check browser permissions for camera access
-- Try a different browser (Chrome/Safari recommended)
-- Make sure no other app is using the camera
+- ✅ Verify you're using **HTTPS** (https:// not http://)
+- ✅ Accept the certificate security warning
+- ✅ Check browser permissions for camera access
+- ✅ Try a different browser (Chrome/Safari recommended)
+- ✅ Make sure no other app is using the camera
+- ✅ Reload the page after accepting the certificate warning
 
 ### Cannot Connect to Server
 
@@ -199,8 +247,10 @@ videoBitsPerSecond: 500000 // Adjust this value
 
 - This application is designed for **LOCAL NETWORK USE ONLY**
 - Do not expose to the internet without proper security measures
-- All video data is transmitted unencrypted over your LAN
-- For internet access, use a VPN or implement HTTPS with authentication
+- Self-signed certificates are used for HTTPS (you'll see browser warnings - this is normal)
+- Video data is transmitted over your local network only
+- For internet access, use a VPN or implement proper HTTPS with a valid certificate and authentication
+- The self-signed certificate is generated locally and includes your local IP addresses
 
 ## Browser Compatibility
 

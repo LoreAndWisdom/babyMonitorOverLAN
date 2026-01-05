@@ -146,11 +146,47 @@
         .error.show {
             display: block;
         }
+
+        .https-warning {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            line-height: 1.6;
+            display: none;
+        }
+
+        .https-warning.show {
+            display: block;
+        }
+
+        .https-warning strong {
+            display: block;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+
+        .https-warning a {
+            color: white;
+            text-decoration: underline;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>📹 Baby Monitor Camera</h1>
+
+        <div class="https-warning" id="httpsWarning">
+            <strong>🔒 HTTPS Required for Camera Access</strong>
+            This page is using HTTP, but camera access requires HTTPS on mobile devices.
+            <br><br>
+            Please visit: <a href="" id="httpsLink"></a>
+            <br><br>
+            Note: You may need to accept a security warning for the self-signed certificate.
+        </div>
 
         <div class="status disconnected" id="status">
             Disconnected from server
@@ -225,9 +261,37 @@
             }, 5000);
         }
 
+        // Check if HTTPS is required
+        function checkHTTPS() {
+            const isLocalhost = window.location.hostname === 'localhost' ||
+                               window.location.hostname === '127.0.0.1';
+            const isHTTPS = window.location.protocol === 'https:';
+
+            if (!isLocalhost && !isHTTPS) {
+                return false;
+            }
+            return true;
+        }
+
         // Start camera and streaming
         async function startCamera() {
+            // Check HTTPS requirement
+            if (!checkHTTPS()) {
+                showError(
+                    '🔒 Camera requires HTTPS! Please use: https://' +
+                    window.location.host +
+                    '\n\nYou may need to accept the security warning first.'
+                );
+                return;
+            }
+
             try {
+                // Check if getUserMedia is supported
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    showError('Camera API not supported in this browser. Please use Chrome, Firefox, or Safari.');
+                    return;
+                }
+
                 const constraints = {
                     video: {
                         facingMode: currentFacingMode,
@@ -250,7 +314,24 @@
                 updateStatus('streaming', '🔴 Streaming...');
             } catch (error) {
                 console.error('Error accessing camera:', error);
-                showError('Could not access camera. Please check permissions.');
+
+                let errorMessage = 'Could not access camera. ';
+
+                if (error.name === 'NotAllowedError') {
+                    errorMessage += 'Camera permission denied. Please allow camera access and try again.';
+                } else if (error.name === 'NotFoundError') {
+                    errorMessage += 'No camera found on this device.';
+                } else if (error.name === 'NotReadableError') {
+                    errorMessage += 'Camera is in use by another application.';
+                } else if (error.name === 'OverconstrainedError') {
+                    errorMessage += 'Camera does not support the requested settings.';
+                } else if (error.name === 'SecurityError') {
+                    errorMessage += 'HTTPS is required for camera access. Use https:// instead of http://';
+                } else {
+                    errorMessage += error.message || 'Unknown error occurred.';
+                }
+
+                showError(errorMessage);
             }
         }
 
@@ -315,7 +396,25 @@
         stopBtn.addEventListener('click', stopCamera);
         switchBtn.addEventListener('click', switchCamera);
 
-        // Initialize connection
+        // Check HTTPS on page load
+        function checkHTTPSOnLoad() {
+            const httpsWarning = document.getElementById('httpsWarning');
+            const httpsLink = document.getElementById('httpsLink');
+
+            if (!checkHTTPS()) {
+                const httpsUrl = 'https://' + window.location.host + window.location.pathname;
+                httpsLink.href = httpsUrl;
+                httpsLink.textContent = httpsUrl;
+                httpsWarning.classList.add('show');
+
+                // Disable start button
+                startBtn.disabled = true;
+                startBtn.style.opacity = '0.5';
+            }
+        }
+
+        // Initialize
+        checkHTTPSOnLoad();
         connectToServer();
 
         // Clean up on page unload

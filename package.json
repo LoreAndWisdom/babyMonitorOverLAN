@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "generate-cert": "node setup-https.js",
+    "setup": "npm install && npm run generate-cert"
   },
   "keywords": [
     "camera",
