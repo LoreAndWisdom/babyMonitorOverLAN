@@ -109,8 +109,12 @@ Note: You will need to accept the security warning in your browser.
 
 ### Viewing Feeds (Admin Panel)
 
-1. On your computer or any device, open a web browser
-2. Navigate to the admin panel URL (e.g., `http://192.168.1.100:3000/admin`)
+**Important:** For security, the admin panel is only accessible from the server machine (localhost).
+
+1. **On the server machine**, open a web browser
+2. Navigate to the admin panel:
+   - **HTTP:** `http://localhost:3000/admin`
+   - **HTTPS:** `https://localhost:3443/admin`
 3. You'll see all connected cameras with their:
    - IP addresses
    - Live video feeds
@@ -122,6 +126,8 @@ Note: You will need to accept the security warning in your browser.
 - Click "Fullscreen" on any feed for full-screen viewing
 - Auto-updates when cameras connect/disconnect
 - Click "Refresh" to manually update the device list
+
+**Security Note:** The admin panel cannot be accessed from other devices on the network. This prevents unauthorized viewing of camera feeds. If you try to access from another device, you'll see an "Access Denied" message.
 
 ## Network Configuration
 
@@ -261,10 +267,15 @@ videoBitsPerSecond: 500000 // Adjust this value
 ## Security Considerations
 
 - This application is designed for **LOCAL NETWORK USE ONLY**
-- Do not expose to the internet without proper security measures
+- **Admin panel is restricted to localhost only** - can only be accessed from the server machine
+- Camera feeds can be accessed from any device on the LAN, but viewing requires admin access
 - Self-signed certificates are used for HTTPS (you'll see browser warnings - this is normal)
 - Video data is transmitted over your local network only
-- For internet access, use a VPN or implement proper HTTPS with a valid certificate and authentication
+- Do not expose to the internet without proper security measures:
+  - Use a VPN for remote access
+  - Implement proper authentication
+  - Use valid SSL certificates
+  - Add rate limiting and connection monitoring
 - The self-signed certificate is generated locally and includes your local IP addresses
 
 ## Browser Compatibility
