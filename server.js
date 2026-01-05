@@ -15,6 +15,9 @@ const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
 // Store connected clients
 const clients = new Map();
 
+// Store Socket.IO instances for cross-server broadcasting
+let httpIO, httpsIO;
+
 // Serve static files
 app.use(express.static('public'));
 app.use('/admin', express.static('admin'));
@@ -157,17 +160,35 @@ function setupSocketHandlers(io) {
 
       // Notify all admins about the new camera
       if (clientType === 'camera') {
-        io.emit('camera-connected', clients.get(clientId));
+        const clientData = clients.get(clientId);
+        io.emit('camera-connected', clientData);
+
+        // Also notify admins on the other server
+        if (io === httpIO && httpsIO) {
+          httpsIO.emit('camera-connected', clientData);
+        } else if (io === httpsIO && httpIO) {
+          httpIO.emit('camera-connected', clientData);
+        }
       }
     });
 
     // Handle video stream from camera clients
     socket.on('video-stream', (data) => {
-      // Broadcast video data to all admin clients
-      socket.broadcast.emit('video-data', {
+      // Broadcast video data to all admin clients on both HTTP and HTTPS servers
+      const videoData = {
         clientId: clientId,
         data: data
-      });
+      };
+
+      // Broadcast to this server's clients
+      socket.broadcast.emit('video-data', videoData);
+
+      // Also broadcast to the other server's clients (HTTP or HTTPS)
+      if (io === httpIO && httpsIO) {
+        httpsIO.emit('video-data', videoData);
+      } else if (io === httpsIO && httpIO) {
+        httpIO.emit('video-data', videoData);
+      }
     });
 
     // Handle request for clients list
@@ -182,8 +203,14 @@ function setupSocketHandlers(io) {
 
       const client = clients.get(clientId);
       if (client && client.type === 'camera') {
-        // Notify admins that camera disconnected
+        // Notify admins on both servers that camera disconnected
         io.emit('camera-disconnected', clientId);
+
+        if (io === httpIO && httpsIO) {
+          httpsIO.emit('camera-disconnected', clientId);
+        } else if (io === httpsIO && httpIO) {
+          httpIO.emit('camera-disconnected', clientId);
+        }
       }
 
       clients.delete(clientId);
@@ -193,7 +220,7 @@ function setupSocketHandlers(io) {
 
 // Create HTTP server
 const httpServer = http.createServer(app);
-const httpIO = socketIO(httpServer, {
+httpIO = socketIO(httpServer, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
@@ -245,7 +272,7 @@ if (ensureCertificates()) {
     };
 
     const httpsServer = https.createServer(httpsOptions, app);
-    const httpsIO = socketIO(httpsServer, {
+    httpsIO = socketIO(httpsServer, {
       cors: {
         origin: "*",
         methods: ["GET", "POST"]
