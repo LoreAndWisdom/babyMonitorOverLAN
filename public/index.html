@@ -223,9 +223,12 @@
         let socket;
         let mediaStream;
         let streamingInterval;
+        let audioStreamingInterval;
         let currentFacingMode = 'user'; // Start with front camera
         let canvas;
         let canvasContext;
+        let audioContext;
+        let audioMediaRecorder;
 
         // Connect to Socket.IO server
         function connectToServer() {
@@ -300,14 +303,15 @@
                         width: { ideal: 1280 },
                         height: { ideal: 720 }
                     },
-                    audio: false
+                    audio: true // Enable audio capture
                 };
 
                 mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = mediaStream;
 
-                // Start streaming
+                // Start streaming video and audio
                 startStreaming();
+                startAudioStreaming();
 
                 startBtn.disabled = true;
                 stopBtn.disabled = false;
@@ -369,11 +373,60 @@
             }, 100); // Send frame every 100ms (10 fps)
         }
 
+        // Start audio streaming to server
+        function startAudioStreaming() {
+            try {
+                // Get audio track from media stream
+                const audioTrack = mediaStream.getAudioTracks()[0];
+                if (!audioTrack) {
+                    console.warn('No audio track available');
+                    return;
+                }
+
+                // Create audio-only stream
+                const audioStream = new MediaStream([audioTrack]);
+
+                // Create MediaRecorder for audio
+                const options = {
+                    mimeType: 'audio/webm;codecs=opus',
+                    audioBitsPerSecond: 128000 // 128 kbps
+                };
+
+                try {
+                    audioMediaRecorder = new MediaRecorder(audioStream, options);
+                } catch (e) {
+                    // Fallback to default if opus not supported
+                    audioMediaRecorder = new MediaRecorder(audioStream);
+                }
+
+                audioMediaRecorder.ondataavailable = (event) => {
+                    if (event.data && event.data.size > 0 && socket.connected) {
+                        // Convert blob to base64 and send
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            socket.emit('audio-stream', reader.result);
+                        };
+                        reader.readAsDataURL(event.data);
+                    }
+                };
+
+                // Send audio chunks every 500ms for smooth playback
+                audioMediaRecorder.start(500);
+            } catch (error) {
+                console.error('Error starting audio stream:', error);
+            }
+        }
+
         // Stop camera and streaming
         function stopCamera() {
             if (streamingInterval) {
                 clearInterval(streamingInterval);
                 streamingInterval = null;
+            }
+
+            if (audioMediaRecorder && audioMediaRecorder.state !== 'inactive') {
+                audioMediaRecorder.stop();
+                audioMediaRecorder = null;
             }
 
             if (mediaStream) {

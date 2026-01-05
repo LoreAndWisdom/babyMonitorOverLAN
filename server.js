@@ -249,6 +249,25 @@ function setupSocketHandlers(io) {
       }
     });
 
+    // Handle audio stream from camera clients
+    socket.on('audio-stream', (data) => {
+      // Broadcast audio data to all admin clients on both HTTP and HTTPS servers
+      const audioData = {
+        clientId: clientId,
+        data: data
+      };
+
+      // Broadcast to this server's clients
+      socket.broadcast.emit('audio-data', audioData);
+
+      // Also broadcast to the other server's clients (HTTP or HTTPS)
+      if (io === httpIO && httpsIO) {
+        httpsIO.emit('audio-data', audioData);
+      } else if (io === httpsIO && httpIO) {
+        httpIO.emit('audio-data', audioData);
+      }
+    });
+
     // Handle request for clients list
     socket.on('request-clients-list', () => {
       const cameraClients = Array.from(clients.values()).filter(c => c.type === 'camera');

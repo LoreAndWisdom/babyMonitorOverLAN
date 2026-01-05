@@ -215,6 +215,77 @@
         .fullscreen-btn:hover {
             background: rgba(255, 255, 255, 0.3);
         }
+
+        .audio-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+        }
+
+        .volume-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1;
+        }
+
+        .volume-slider {
+            flex: 1;
+            height: 4px;
+            border-radius: 2px;
+            background: rgba(255, 255, 255, 0.2);
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #4CAF50;
+            cursor: pointer;
+        }
+
+        .volume-slider::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #4CAF50;
+            cursor: pointer;
+            border: none;
+        }
+
+        .mute-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s ease;
+            min-width: 40px;
+        }
+
+        .mute-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .mute-btn.muted {
+            background: #f44336;
+        }
+
+        .volume-label {
+            font-size: 12px;
+            color: #b0b0ff;
+            min-width: 35px;
+        }
     </style>
 </head>
 <body>
@@ -302,6 +373,12 @@
             updateVideoStream(clientId, videoData);
         });
 
+        // Handle incoming audio data
+        socket.on('audio-data', (data) => {
+            const { clientId, data: audioData } = data;
+            updateAudioStream(clientId, audioData);
+        });
+
         // Add device to the display
         function addDevice(client) {
             if (devices.has(client.id)) {
@@ -334,6 +411,23 @@
                     style="display: none;"
                 />
                 <div class="device-time">Connected: ${connectedTime}</div>
+                <div class="audio-controls">
+                    <button class="mute-btn" id="mute-${client.id}" onclick="toggleMute('${client.id}')">🔊</button>
+                    <div class="volume-control">
+                        <span class="volume-label">Vol:</span>
+                        <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value="80"
+                            class="volume-slider"
+                            id="volume-${client.id}"
+                            onchange="setVolume('${client.id}', this.value)"
+                            oninput="setVolume('${client.id}', this.value)"
+                        />
+                        <span class="volume-label" id="volume-label-${client.id}">80%</span>
+                    </div>
+                </div>
                 <button class="fullscreen-btn" onclick="toggleFullscreen('video-${client.id}')">⛶ Fullscreen</button>
             `;
 
@@ -344,9 +438,18 @@
 
             devicesContainer.appendChild(deviceCard);
 
-            // Store reference to the image element
+            // Store reference to the image element and create audio element
             const img = document.getElementById(`video-${client.id}`);
-            videoElements.set(client.id, { img });
+            const audio = new Audio();
+            audio.volume = 0.8; // Default 80% volume
+
+            videoElements.set(client.id, {
+                img,
+                audio,
+                audioQueue: [],
+                isPlayingAudio: false,
+                isMuted: false
+            });
         }
 
         // Remove device from display
@@ -393,6 +496,69 @@
             img.src = videoData;
         }
 
+        // Update audio stream
+        function updateAudioStream(clientId, audioData) {
+            const element = videoElements.get(clientId);
+            if (!element) return;
+
+            const { audio, audioQueue, isPlayingAudio, isMuted } = element;
+
+            if (isMuted) return; // Skip if muted
+
+            // Add audio chunk to queue
+            audioQueue.push(audioData);
+
+            // Start playing if not already playing
+            if (!element.isPlayingAudio) {
+                playNextAudioChunk(clientId);
+            }
+        }
+
+        // Play next audio chunk from queue
+        function playNextAudioChunk(clientId) {
+            const element = videoElements.get(clientId);
+            if (!element) return;
+
+            const { audio, audioQueue } = element;
+
+            if (audioQueue.length === 0) {
+                element.isPlayingAudio = false;
+                return;
+            }
+
+            element.isPlayingAudio = true;
+            const audioData = audioQueue.shift();
+
+            // Convert base64 to blob and play
+            fetch(audioData)
+                .then(res => res.blob())
+                .then(blob => {
+                    const url = URL.createObjectURL(blob);
+                    audio.src = url;
+
+                    const playPromise = audio.play();
+                    if (playPromise !== undefined) {
+                        playPromise
+                            .then(() => {
+                                // Playing started successfully
+                            })
+                            .catch(error => {
+                                console.error('Error playing audio:', error);
+                            });
+                    }
+
+                    // Clean up and play next chunk when this one ends
+                    audio.onended = () => {
+                        URL.revokeObjectURL(url);
+                        playNextAudioChunk(clientId);
+                    };
+                })
+                .catch(err => {
+                    console.error('Error loading audio:', err);
+                    element.isPlayingAudio = false;
+                });
+        }
+
         // Update statistics
         function updateStats() {
             cameraCount.textContent = devices.size;
@@ -418,8 +584,44 @@
             }
         }
 
-        // Make toggleFullscreen available globally
+        // Toggle mute for a device
+        function toggleMute(clientId) {
+            const element = videoElements.get(clientId);
+            if (!element) return;
+
+            element.isMuted = !element.isMuted;
+            element.audio.muted = element.isMuted;
+
+            const muteBtn = document.getElementById(`mute-${clientId}`);
+            if (element.isMuted) {
+                muteBtn.textContent = '🔇';
+                muteBtn.classList.add('muted');
+                element.audio.pause();
+                element.audioQueue = []; // Clear queue when muting
+            } else {
+                muteBtn.textContent = '🔊';
+                muteBtn.classList.remove('muted');
+            }
+        }
+
+        // Set volume for a device
+        function setVolume(clientId, value) {
+            const element = videoElements.get(clientId);
+            if (!element) return;
+
+            const volume = value / 100;
+            element.audio.volume = volume;
+
+            const volumeLabel = document.getElementById(`volume-label-${clientId}`);
+            if (volumeLabel) {
+                volumeLabel.textContent = `${value}%`;
+            }
+        }
+
+        // Make functions available globally
         window.toggleFullscreen = toggleFullscreen;
+        window.toggleMute = toggleMute;
+        window.setVolume = setVolume;
     </script>
 </body>
 </html>
