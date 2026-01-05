@@ -277,9 +277,9 @@
         async function startCamera() {
             // Check HTTPS requirement
             if (!checkHTTPS()) {
+                const httpsUrl = 'https://' + window.location.hostname + ':3443' + window.location.pathname;
                 showError(
-                    '🔒 Camera requires HTTPS! Please use: https://' +
-                    window.location.host +
+                    '🔒 Camera requires HTTPS! Please use: ' + httpsUrl +
                     '\n\nYou may need to accept the security warning first.'
                 );
                 return;
@@ -402,7 +402,10 @@
             const httpsLink = document.getElementById('httpsLink');
 
             if (!checkHTTPS()) {
-                const httpsUrl = 'https://' + window.location.host + window.location.pathname;
+                // Replace HTTP port (3000) with HTTPS port (3443)
+                const hostname = window.location.hostname;
+                const httpsPort = 3443;
+                const httpsUrl = 'https://' + hostname + ':' + httpsPort + window.location.pathname;
                 httpsLink.href = httpsUrl;
                 httpsLink.textContent = httpsUrl;
                 httpsWarning.classList.add('show');
