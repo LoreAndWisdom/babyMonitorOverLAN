@@ -5,6 +5,7 @@ const socketIO = require('socket.io');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { execSync } = require('child_process');
 
 const app = express();
 
@@ -42,6 +43,88 @@ function getLocalIPs() {
   }
 
   return addresses;
+}
+
+// Check if certificate includes all current IPs
+function checkCertificateIPs() {
+  const certPath = path.join(__dirname, 'certs', 'server.crt');
+
+  if (!fs.existsSync(certPath)) {
+    return false;
+  }
+
+  try {
+    const currentIPs = getLocalIPs();
+
+    // Get IPs from certificate
+    const certOutput = execSync(
+      `openssl x509 -in "${certPath}" -text -noout | grep "IP Address"`,
+      { encoding: 'utf8' }
+    );
+
+    // Extract IP addresses from certificate
+    const certIPs = [];
+    const ipMatches = certOutput.match(/IP Address:(\d+\.\d+\.\d+\.\d+)/g);
+    if (ipMatches) {
+      ipMatches.forEach(match => {
+        const ip = match.replace('IP Address:', '');
+        if (ip !== '127.0.0.1') {
+          certIPs.push(ip);
+        }
+      });
+    }
+
+    // Check if all current IPs are in the certificate
+    for (const ip of currentIPs) {
+      if (!certIPs.includes(ip)) {
+        console.log(`⚠️  Certificate missing IP: ${ip}`);
+        return false;
+      }
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error checking certificate:', error.message);
+    return false;
+  }
+}
+
+// Generate SSL certificates
+function generateCertificates() {
+  console.log('\n🔐 Generating SSL certificates...');
+
+  try {
+    execSync('node setup-https.js', {
+      stdio: 'inherit',
+      cwd: __dirname
+    });
+    console.log('✅ Certificates generated successfully\n');
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to generate certificates:', error.message);
+    return false;
+  }
+}
+
+// Ensure certificates exist and are valid
+function ensureCertificates() {
+  const certPath = path.join(__dirname, 'certs', 'server.crt');
+  const keyPath = path.join(__dirname, 'certs', 'server.key');
+
+  // Check if certificates exist
+  if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+    console.log('📋 Certificates not found');
+    return generateCertificates();
+  }
+
+  // Check if current IPs are in the certificate
+  if (!checkCertificateIPs()) {
+    console.log('📋 Certificate IPs outdated, regenerating...');
+    return generateCertificates();
+  }
+
+  console.log('✅ Valid certificates found');
+  return true;
 }
 
 // Socket.IO connection handling
@@ -149,12 +232,13 @@ httpServer.listen(PORT, () => {
   }
 });
 
-// Try to start HTTPS server if certificates exist
-const certPath = path.join(__dirname, 'certs', 'server.crt');
-const keyPath = path.join(__dirname, 'certs', 'server.key');
-
-if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+// Ensure certificates are generated and valid
+if (ensureCertificates()) {
+  // Start HTTPS server
   try {
+    const certPath = path.join(__dirname, 'certs', 'server.crt');
+    const keyPath = path.join(__dirname, 'certs', 'server.key');
+
     const httpsOptions = {
       key: fs.readFileSync(keyPath),
       cert: fs.readFileSync(certPath)
@@ -173,22 +257,19 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
 
     httpsServer.listen(HTTPS_PORT, () => {
       console.log(`\n✅ HTTPS Server started on port ${HTTPS_PORT}`);
-      console.log('Self-signed certificate found - mobile camera access enabled!');
+      console.log('Mobile camera access enabled!');
       console.log('\nNote: You will need to accept the security warning in your browser.');
       console.log('=================================\n');
     });
   } catch (error) {
     console.error('\n❌ Failed to start HTTPS server:', error.message);
-    console.log('\nRun: npm run generate-cert');
-    console.log('Then restart the server.\n');
+    console.log('\nThere was an error starting the HTTPS server.');
+    console.log('Please check the error message above.\n');
     console.log('=================================\n');
   }
 } else {
-  console.log('\n⚠️  HTTPS certificates not found!');
-  console.log('\nTo enable camera access on mobile devices:');
-  console.log('1. Run: npm run generate-cert');
-  console.log('2. Restart the server');
-  console.log('\nOr use the setup script:');
-  console.log('   node setup-https.js');
-  console.log('\n=================================\n');
+  console.log('\n❌ Failed to generate certificates');
+  console.log('HTTPS server will not be available.');
+  console.log('Mobile camera access will not work.\n');
+  console.log('=================================\n');
 }
