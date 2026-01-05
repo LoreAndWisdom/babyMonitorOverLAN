@@ -392,6 +392,12 @@
             const threshold = 20 - (thresholds.videoSensitivity * 0.19);
             const motionDetected = changePercent > threshold;
 
+            // Debug logging (throttled to once per second)
+            if (!detectMotion.lastLog || Date.now() - detectMotion.lastLog > 1000) {
+                console.log(`Motion: ${changePercent.toFixed(2)}% change, threshold: ${threshold.toFixed(2)}%, detected: ${motionDetected}`);
+                detectMotion.lastLog = Date.now();
+            }
+
             previousFrame = currentImageData;
             return motionDetected;
         }
@@ -453,7 +459,15 @@
 
             // Normalize to 0-100 scale and compare with threshold
             const volumeLevel = (average / 255) * 100;
-            return volumeLevel > thresholds.audioThreshold;
+            const voiceDetected = volumeLevel > thresholds.audioThreshold;
+
+            // Debug logging (throttled to once per second)
+            if (!detectVoiceActivity.lastLog || Date.now() - detectVoiceActivity.lastLog > 1000) {
+                console.log(`Voice: ${volumeLevel.toFixed(2)}% level, threshold: ${thresholds.audioThreshold}%, detected: ${voiceDetected}`);
+                detectVoiceActivity.lastLog = Date.now();
+            }
+
+            return voiceDetected;
         }
 
         // Check and update status (idle or vox)
@@ -534,12 +548,17 @@
                     audioMediaRecorder = new MediaRecorder(audioStream);
                 }
 
+                let audioChunksSent = 0;
                 audioMediaRecorder.ondataavailable = (event) => {
                     if (event.data && event.data.size > 0 && socket.connected) {
                         // Always send audio (VOX only affects video and status)
                         const reader = new FileReader();
                         reader.onloadend = () => {
                             socket.emit('audio-stream', reader.result);
+                            audioChunksSent++;
+                            if (audioChunksSent % 10 === 0) {
+                                console.log(`Audio: sent ${audioChunksSent} chunks (${event.data.size} bytes)`);
+                            }
                         };
                         reader.readAsDataURL(event.data);
                     }
