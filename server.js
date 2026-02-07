@@ -290,13 +290,10 @@ function setupSocketHandlers(io) {
 
       console.log(`Thresholds updated: Video=${data.videoSensitivity}, Audio=${data.audioThreshold}`);
 
-      // Broadcast updated thresholds to all camera clients on both servers
-      const cameraClients = Array.from(clients.values()).filter(c => c.type === 'camera');
-      cameraClients.forEach(client => {
-        io.to(client.id).emit('thresholds-update', thresholds);
-      });
+      // Broadcast to all cameras on current server
+      io.emit('thresholds-update', thresholds);
 
-      // Also notify cameras on the other server
+      // Also broadcast to cameras on the other server
       if (io === httpIO && httpsIO) {
         httpsIO.emit('thresholds-update', thresholds);
       } else if (io === httpsIO && httpIO) {
