@@ -240,6 +240,7 @@
         let currentStatus = 'idle'; // 'idle' or 'vox'
         let audioAnalyser = null;
         let audioDataArray = null;
+        let audioSendUntil = 0; // Timestamp until which to send audio (15 seconds after voice detected)
 
         // Connect to Socket.IO server
         function connectToServer() {
@@ -461,9 +462,27 @@
             const volumeLevel = (average / 255) * 100;
             const voiceDetected = volumeLevel > thresholds.audioThreshold;
 
+            // Special case: if threshold is 1 (minimum), always send audio for testing
+            if (thresholds.audioThreshold === 1) {
+                audioSendUntil = Date.now() + 60000; // Keep window open
+            } else if (voiceDetected) {
+                // If voice detected, extend audio sending window by 15 seconds
+                const now = Date.now();
+                const newSendUntil = now + 15000; // 15 seconds from now
+
+                if (audioSendUntil === 0 || audioSendUntil < now) {
+                    console.log(`Voice detected! Starting 15-second audio transmission window`);
+                } else if (newSendUntil > audioSendUntil) {
+                    console.log(`Voice detected again! Extending audio transmission window`);
+                }
+
+                audioSendUntil = newSendUntil;
+            }
+
             // Debug logging (throttled to once per second)
             if (!detectVoiceActivity.lastLog || Date.now() - detectVoiceActivity.lastLog > 1000) {
-                console.log(`Voice: ${volumeLevel.toFixed(2)}% level, threshold: ${thresholds.audioThreshold}%, detected: ${voiceDetected}`);
+                const remainingTime = Math.max(0, (audioSendUntil - Date.now()) / 1000);
+                console.log(`Voice: ${volumeLevel.toFixed(2)}% level, threshold: ${thresholds.audioThreshold}%, detected: ${voiceDetected}, sending for ${remainingTime.toFixed(1)}s more`);
                 detectVoiceActivity.lastLog = Date.now();
             }
 
@@ -479,8 +498,11 @@
             const voiceActive = detectVoiceActivity();
             const now = Date.now();
 
-            // Determine if we have activity
-            const hasActivity = lastMotionDetected || voiceActive;
+            // Consider audio transmission window as activity
+            const audioTransmitting = now < audioSendUntil;
+
+            // Determine if we have activity (motion, voice, or still sending audio)
+            const hasActivity = lastMotionDetected || voiceActive || audioTransmitting;
 
             // Update status with some hysteresis (wait 2 seconds before going back to idle)
             if (hasActivity) {
@@ -549,18 +571,30 @@
                 }
 
                 let audioChunksSent = 0;
+                let audioChunksSkipped = 0;
                 audioMediaRecorder.ondataavailable = (event) => {
                     if (event.data && event.data.size > 0 && socket.connected) {
-                        // Always send audio (VOX only affects video and status)
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                            socket.emit('audio-stream', reader.result);
-                            audioChunksSent++;
-                            if (audioChunksSent % 10 === 0) {
-                                console.log(`Audio: sent ${audioChunksSent} chunks (${event.data.size} bytes)`);
+                        const now = Date.now();
+
+                        // Only send audio if we're within the 15-second window after voice detection
+                        if (now < audioSendUntil) {
+                            const reader = new FileReader();
+                            reader.onloadend = () => {
+                                socket.emit('audio-stream', reader.result);
+                                audioChunksSent++;
+                                if (audioChunksSent % 10 === 0) {
+                                    const remainingTime = Math.max(0, (audioSendUntil - now) / 1000);
+                                    console.log(`Audio: sent ${audioChunksSent} chunks (${event.data.size} bytes), ${remainingTime.toFixed(1)}s remaining`);
+                                }
+                            };
+                            reader.readAsDataURL(event.data);
+                        } else {
+                            // Skip sending this chunk
+                            audioChunksSkipped++;
+                            if (audioChunksSkipped % 20 === 1) {
+                                console.log(`Audio: skipped ${audioChunksSkipped} chunks (waiting for voice activity)`);
                             }
-                        };
-                        reader.readAsDataURL(event.data);
+                        }
                     }
                 };
 
