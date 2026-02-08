@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const { execSync } = require('child_process');
+const selfsigned = require('selfsigned');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -36,64 +36,48 @@ const primaryIP = localIPs[0] || '192.168.1.100';
 console.log('Detected local IPs:', localIPs.join(', '));
 console.log(`Using ${primaryIP} as primary IP\n`);
 
-// Check if openssl is available
-try {
-  execSync('openssl version', { stdio: 'ignore' });
-} catch (error) {
-  console.error('❌ OpenSSL is not installed!');
-  console.log('\nPlease install OpenSSL:');
-  console.log('  - Windows: Download from https://slproweb.com/products/Win32OpenSSL.html');
-  console.log('  - macOS: brew install openssl');
-  console.log('  - Linux: sudo apt-get install openssl (Debian/Ubuntu)');
-  console.log('           sudo yum install openssl (RHEL/CentOS)');
-  process.exit(1);
-}
+// Define certificate attributes
+const attrs = [
+  { name: 'commonName', value: primaryIP },
+  { name: 'countryName', value: 'US' },
+  { shortName: 'ST', value: 'State' },
+  { name: 'localityName', value: 'City' },
+  { name: 'organizationName', value: 'BabyMonitor' },
+  { shortName: 'OU', value: 'Development' }
+];
 
-// Create OpenSSL config file with Subject Alternative Names
-const configContent = `
-[req]
-default_bits = 2048
-prompt = no
-default_md = sha256
-distinguished_name = dn
-req_extensions = v3_req
+// Add Subject Alternative Names (SANs)
+const altNames = [
+  { type: 2, value: 'localhost' }, // DNS
+  { type: 7, ip: '127.0.0.1' }, // IP
+  ...localIPs.map(ip => ({ type: 7, ip: ip }))
+];
 
-[dn]
-C=US
-ST=State
-L=City
-O=BabyMonitor
-OU=Development
-CN=${primaryIP}
-
-[v3_req]
-subjectAltName = @alt_names
-
-[alt_names]
-DNS.1 = localhost
-IP.1 = 127.0.0.1
-IP.2 = ${primaryIP}
-${localIPs.map((ip, i) => `IP.${i + 3} = ${ip}`).join('\n')}
-`;
-
-const configPath = path.join(certsDir, 'openssl.cnf');
-fs.writeFileSync(configPath, configContent);
-console.log('✓ Created OpenSSL configuration');
-
-// Generate private key
-const keyPath = path.join(certsDir, 'server.key');
-const certPath = path.join(certsDir, 'server.crt');
+const options = {
+  keySize: 2048,
+  days: 365,
+  algorithm: 'sha256',
+  extensions: [
+    {
+      name: 'subjectAltName',
+      altNames: altNames
+    }
+  ]
+};
 
 try {
-  console.log('\n⏳ Generating private key...');
-  execSync(`openssl genrsa -out "${keyPath}" 2048`, { stdio: 'inherit' });
+  console.log('⏳ Generating self-signed certificate...\n');
+
+  const pems = selfsigned.generate(attrs, options);
+
+  // Write private key
+  const keyPath = path.join(certsDir, 'server.key');
+  fs.writeFileSync(keyPath, pems.private, { mode: 0o600 });
   console.log('✓ Private key generated');
 
-  console.log('\n⏳ Generating self-signed certificate...');
-  execSync(
-    `openssl req -new -x509 -key "${keyPath}" -out "${certPath}" -days 365 -config "${configPath}" -extensions v3_req`,
-    { stdio: 'inherit' }
-  );
+  // Write certificate
+  const certPath = path.join(certsDir, 'server.crt');
+  fs.writeFileSync(certPath, pems.cert);
   console.log('✓ Certificate generated');
 
   console.log('\n✅ HTTPS setup complete!\n');
@@ -116,5 +100,6 @@ try {
 
 } catch (error) {
   console.error('\n❌ Failed to generate certificates:', error.message);
+  console.error(error);
   process.exit(1);
 }

@@ -6,6 +6,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { execSync } = require('child_process');
+const forge = require('node-forge');
 
 const app = express();
 
@@ -123,20 +124,19 @@ function checkCertificateIPs() {
   try {
     const currentIPs = getLocalIPs();
 
-    // Get IPs from certificate
-    const certOutput = execSync(
-      `openssl x509 -in "${certPath}" -text -noout | grep "IP Address"`,
-      { encoding: 'utf8' }
-    );
+    // Read and parse certificate using node-forge
+    const certPem = fs.readFileSync(certPath, 'utf8');
+    const cert = forge.pki.certificateFromPem(certPem);
 
-    // Extract IP addresses from certificate
+    // Extract IP addresses from certificate's Subject Alternative Names
     const certIPs = [];
-    const ipMatches = certOutput.match(/IP Address:(\d+\.\d+\.\d+\.\d+)/g);
-    if (ipMatches) {
-      ipMatches.forEach(match => {
-        const ip = match.replace('IP Address:', '');
-        if (ip !== '127.0.0.1') {
-          certIPs.push(ip);
+    const altNames = cert.extensions.find(ext => ext.name === 'subjectAltName');
+
+    if (altNames && altNames.altNames) {
+      altNames.altNames.forEach(altName => {
+        // type 7 = IP address
+        if (altName.type === 7 && altName.ip !== '127.0.0.1') {
+          certIPs.push(altName.ip);
         }
       });
     }
