@@ -1,0 +1,27 @@
+{
+  "name": "baby-monitor-over-lan",
+  "version": "1.0.0",
+  "description": "Cross-platform LAN camera server that receives feeds from mobile devices",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "generate-cert": "node setup-https.js",
+    "setup": "npm install && npm run generate-cert"
+  },
+  "keywords": [
+    "camera",
+    "stream",
+    "lan",
+    "baby-monitor",
+    "websocket"
+  ],
+  "author": "",
+  "license": "CC0-1.0",
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.6.1",
+    "selfsigned": "^2.4.1",
+    "node-forge": "^1.3.1"
+  }
+}

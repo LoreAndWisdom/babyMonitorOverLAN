@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Baby Monitor - Camera Feed</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📱</text></svg>">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 30px;
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+
+        .status {
+            text-align: center;
+            padding: 12px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .status.disconnected {
+            background: #fee;
+            color: #c33;
+        }
+
+        .status.connected {
+            background: #efe;
+            color: #3c3;
+        }
+
+        .status.streaming {
+            background: #eef;
+            color: #33c;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 10px;
+            background: #000;
+            margin-bottom: 20px;
+            transform: scaleX(-1);
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            flex: 1;
+            min-width: 120px;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-start {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-start:hover:not(:disabled) {
+            background: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.4);
+        }
+
+        .btn-stop {
+            background: #f44336;
+            color: white;
+        }
+
+        .btn-stop:hover:not(:disabled) {
+            background: #da190b;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(244, 67, 54, 0.4);
+        }
+
+        .btn-switch {
+            background: #2196F3;
+            color: white;
+        }
+
+        .btn-switch:hover:not(:disabled) {
+            background: #0b7dda;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(33, 150, 243, 0.4);
+        }
+
+        .info {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 10px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .https-warning {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            line-height: 1.6;
+            display: none;
+        }
+
+        .https-warning.show {
+            display: block;
+        }
+
+        .https-warning strong {
+            display: block;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+
+        .https-warning a {
+            color: white;
+            text-decoration: underline;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📹 Baby Monitor Camera</h1>
+
+        <div class="https-warning" id="httpsWarning">
+            <strong>🔒 HTTPS Required for Camera Access</strong>
+            This page is using HTTP, but camera access requires HTTPS on mobile devices.
+            <br><br>
+            Please visit: <a href="" id="httpsLink"></a>
+            <br><br>
+            Note: You may need to accept a security warning for the self-signed certificate.
+        </div>
+
+        <div class="status disconnected" id="status">
+            Disconnected from server
+        </div>
+
+        <div class="error" id="error"></div>
+
+        <video id="video" autoplay playsinline muted></video>
+
+        <div class="controls">
+            <button class="btn-start" id="startBtn">Start Camera</button>
+            <button class="btn-stop" id="stopBtn" disabled>Stop Camera</button>
+            <button class="btn-switch" id="switchBtn" disabled>Switch Camera</button>
+        </div>
+
+        <div class="info">
+            <strong>📱 Instructions:</strong><br>
+            1. Click "Start Camera" to begin streaming<br>
+            2. Allow camera access when prompted<br>
+            3. View feeds from the admin panel<br>
+            4. Keep this page open to continue streaming
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const video = document.getElementById('video');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const switchBtn = document.getElementById('switchBtn');
+        const statusDiv = document.getElementById('status');
+        const errorDiv = document.getElementById('error');
+
+        let socket;
+        let mediaStream;
+        let streamingInterval;
+        let audioStreamingInterval;
+        let currentFacingMode = 'user'; // Start with front camera
+        let canvas;
+        let canvasContext;
+        let audioContext;
+        let audioMediaRecorder;
+
+        // VOX and Motion Detection variables
+        let thresholds = {
+            videoSensitivity: 15,
+            audioThreshold: 20
+        };
+        let previousFrame = null;
+        let currentStatus = 'idle'; // 'idle' or 'vox'
+        let audioAnalyser = null;
+        let audioDataArray = null;
+        let audioSendUntil = 0; // Timestamp until which to send audio (15 seconds after voice detected)
+
+        // Connect to Socket.IO server
+        function connectToServer() {
+            socket = io();
+
+            socket.on('connect', () => {
+                console.log('Connected to server');
+                updateStatus('connected', 'Connected to server');
+                socket.emit('identify', { type: 'camera' });
+            });
+
+            socket.on('disconnect', () => {
+                console.log('Disconnected from server');
+                updateStatus('disconnected', 'Disconnected from server');
+            });
+
+            socket.on('connect_error', (error) => {
+                console.error('Connection error:', error);
+                showError('Failed to connect to server. Please check your connection.');
+            });
+
+            socket.on('thresholds-update', (data) => {
+                console.log('Thresholds updated:', data);
+                thresholds = data;
+            });
+        }
+
+        // Update status display
+        function updateStatus(status, message) {
+            statusDiv.className = `status ${status}`;
+            statusDiv.textContent = message;
+        }
+
+        // Show error message
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.classList.add('show');
+            setTimeout(() => {
+                errorDiv.classList.remove('show');
+            }, 5000);
+        }
+
+        // Check if HTTPS is required
+        function checkHTTPS() {
+            const isLocalhost = window.location.hostname === 'localhost' ||
+                               window.location.hostname === '127.0.0.1';
+            const isHTTPS = window.location.protocol === 'https:';
+
+            if (!isLocalhost && !isHTTPS) {
+                return false;
+            }
+            return true;
+        }
+
+        // Start camera and streaming
+        async function startCamera() {
+            // Check HTTPS requirement
+            if (!checkHTTPS()) {
+                const httpsUrl = 'https://' + window.location.hostname + ':3443' + window.location.pathname;
+                showError(
+                    '🔒 Camera requires HTTPS! Please use: ' + httpsUrl +
+                    '\n\nYou may need to accept the security warning first.'
+                );
+                return;
+            }
+
+            try {
+                // Check if getUserMedia is supported
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    showError('Camera API not supported in this browser. Please use Chrome, Firefox, or Safari.');
+                    return;
+                }
+
+                const constraints = {
+                    video: {
+                        facingMode: currentFacingMode,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: true // Enable audio capture
+                };
+
+                mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = mediaStream;
+
+                // Start streaming video and audio
+                startStreaming();
+                startAudioStreaming();
+                startStatusMonitoring(); // Start monitoring for VOX status
+
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                switchBtn.disabled = false;
+
+                updateStatus('streaming', '🔴 Streaming...');
+            } catch (error) {
+                console.error('Error accessing camera:', error);
+
+                let errorMessage = 'Could not access camera. ';
+
+                if (error.name === 'NotAllowedError') {
+                    errorMessage += 'Camera permission denied. Please allow camera access and try again.';
+                } else if (error.name === 'NotFoundError') {
+                    errorMessage += 'No camera found on this device.';
+                } else if (error.name === 'NotReadableError') {
+                    errorMessage += 'Camera is in use by another application.';
+                } else if (error.name === 'OverconstrainedError') {
+                    errorMessage += 'Camera does not support the requested settings.';
+                } else if (error.name === 'SecurityError') {
+                    errorMessage += 'HTTPS is required for camera access. Use https:// instead of http://';
+                } else {
+                    errorMessage += error.message || 'Unknown error occurred.';
+                }
+
+                showError(errorMessage);
+            }
+        }
+
+        // Detect motion by comparing frames
+        function detectMotion(currentImageData) {
+            if (!previousFrame) {
+                previousFrame = currentImageData;
+                return false; // First frame, don't detect motion yet
+            }
+
+            const current = currentImageData.data;
+            const previous = previousFrame.data;
+            let diffPixels = 0;
+            const totalPixels = current.length / 4;
+
+            // Compare pixels (sample every 4th pixel for performance)
+            for (let i = 0; i < current.length; i += 16) {
+                const rDiff = Math.abs(current[i] - previous[i]);
+                const gDiff = Math.abs(current[i + 1] - previous[i + 1]);
+                const bDiff = Math.abs(current[i + 2] - previous[i + 2]);
+                const avgDiff = (rDiff + gDiff + bDiff) / 3;
+
+                // Increased threshold to reduce noise sensitivity
+                if (avgDiff > 40) { // Pixel changed significantly
+                    diffPixels++;
+                }
+            }
+
+            const changePercent = (diffPixels / (totalPixels / 4)) * 100;
+
+            // Higher sensitivity = lower threshold (more sensitive)
+            // Sensitivity 1: threshold = 20% change
+            // Sensitivity 50: threshold = 5% change
+            // Sensitivity 100: threshold = 0.5% change
+            const threshold = 20 - (thresholds.videoSensitivity * 0.19);
+            const motionDetected = changePercent > threshold;
+
+            // Debug logging (throttled to once per second)
+            if (!detectMotion.lastLog || Date.now() - detectMotion.lastLog > 1000) {
+                console.log(`Motion: ${changePercent.toFixed(2)}% change, threshold: ${threshold.toFixed(2)}%, detected: ${motionDetected}`);
+                detectMotion.lastLog = Date.now();
+            }
+
+            previousFrame = currentImageData;
+            return motionDetected;
+        }
+
+        // Start streaming to server
+        function startStreaming() {
+            // Create canvas for capturing frames
+            if (!canvas) {
+                canvas = document.createElement('canvas');
+                canvasContext = canvas.getContext('2d');
+            }
+
+            // Capture and send frames
+            streamingInterval = setInterval(() => {
+                if (video.videoWidth > 0 && video.videoHeight > 0 && socket.connected) {
+                    // Set canvas size to match video
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+
+                    // Draw current video frame to canvas
+                    canvasContext.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                    // Get image data for motion detection
+                    const imageData = canvasContext.getImageData(0, 0, canvas.width, canvas.height);
+                    const motionDetected = detectMotion(imageData);
+                    lastMotionDetected = motionDetected;
+
+                    // Only send if motion detected
+                    if (motionDetected) {
+                        // Convert canvas to JPEG blob and send
+                        canvas.toBlob((blob) => {
+                            if (blob && socket.connected) {
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                    socket.emit('video-stream', reader.result);
+                                };
+                                reader.readAsDataURL(blob);
+                            }
+                        }, 'image/jpeg', 0.7); // 0.7 quality for balance between quality and size
+                    }
+                }
+            }, 100); // Check every 100ms (10 fps)
+        }
+
+        // Detect voice activation (audio above threshold)
+        function detectVoiceActivity() {
+            if (!audioAnalyser || !audioDataArray) {
+                return false;
+            }
+
+            audioAnalyser.getByteFrequencyData(audioDataArray);
+
+            // Calculate average volume
+            let sum = 0;
+            for (let i = 0; i < audioDataArray.length; i++) {
+                sum += audioDataArray[i];
+            }
+            const average = sum / audioDataArray.length;
+
+            // Normalize to 0-100 scale and compare with threshold
+            const volumeLevel = (average / 255) * 100;
+            const voiceDetected = volumeLevel > thresholds.audioThreshold;
+
+            // Special case: if threshold is 1 (minimum), always send audio for testing
+            if (thresholds.audioThreshold === 1) {
+                audioSendUntil = Date.now() + 60000; // Keep window open
+            } else if (voiceDetected) {
+                // If voice detected, extend audio sending window by 15 seconds
+                const now = Date.now();
+                const newSendUntil = now + 15000; // 15 seconds from now
+
+                if (audioSendUntil === 0 || audioSendUntil < now) {
+                    console.log(`Voice detected! Starting 15-second audio transmission window`);
+                } else if (newSendUntil > audioSendUntil) {
+                    console.log(`Voice detected again! Extending audio transmission window`);
+                }
+
+                audioSendUntil = newSendUntil;
+            }
+
+            // Debug logging (throttled to once per second)
+            if (!detectVoiceActivity.lastLog || Date.now() - detectVoiceActivity.lastLog > 1000) {
+                const remainingTime = Math.max(0, (audioSendUntil - Date.now()) / 1000);
+                console.log(`Voice: ${volumeLevel.toFixed(2)}% level, threshold: ${thresholds.audioThreshold}%, detected: ${voiceDetected}, sending for ${remainingTime.toFixed(1)}s more`);
+                detectVoiceActivity.lastLog = Date.now();
+            }
+
+            return voiceDetected;
+        }
+
+        // Check and update status (idle or vox)
+        let lastActivityTime = 0;
+        let lastMotionDetected = false;
+        let lastVoiceDetected = false;
+
+        function checkAndUpdateStatus() {
+            const voiceActive = detectVoiceActivity();
+            const now = Date.now();
+
+            // Consider audio transmission window as activity
+            const audioTransmitting = now < audioSendUntil;
+
+            // Determine if we have activity (motion, voice, or still sending audio)
+            const hasActivity = lastMotionDetected || voiceActive || audioTransmitting;
+
+            // Update status with some hysteresis (wait 2 seconds before going back to idle)
+            if (hasActivity) {
+                lastActivityTime = now;
+                if (currentStatus !== 'vox') {
+                    currentStatus = 'vox';
+                    if (socket && socket.connected) {
+                        socket.emit('camera-status', 'vox');
+                        console.log('Status: VOX');
+                    }
+                }
+            } else if (now - lastActivityTime > 2000) {
+                if (currentStatus !== 'idle') {
+                    currentStatus = 'idle';
+                    if (socket && socket.connected) {
+                        socket.emit('camera-status', 'idle');
+                        console.log('Status: IDLE');
+                    }
+                }
+            }
+
+            lastVoiceDetected = voiceActive;
+        }
+
+        // Start status monitoring (independent of audio)
+        function startStatusMonitoring() {
+            setInterval(() => {
+                checkAndUpdateStatus();
+            }, 200); // Check every 200ms
+        }
+
+        // Start audio streaming to server
+        function startAudioStreaming() {
+            try {
+                // Get audio track from media stream
+                const audioTrack = mediaStream.getAudioTracks()[0];
+                if (!audioTrack) {
+                    console.warn('No audio track available');
+                    return;
+                }
+
+                // Create audio-only stream
+                const audioStream = new MediaStream([audioTrack]);
+
+                // Set up audio analyser for VOX detection
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                const source = audioContext.createMediaStreamSource(audioStream);
+                audioAnalyser = audioContext.createAnalyser();
+                audioAnalyser.fftSize = 256;
+                source.connect(audioAnalyser);
+                audioDataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+
+                // Create MediaRecorder for audio
+                const options = {
+                    mimeType: 'audio/webm;codecs=opus',
+                    audioBitsPerSecond: 128000 // 128 kbps
+                };
+
+                try {
+                    audioMediaRecorder = new MediaRecorder(audioStream, options);
+                } catch (e) {
+                    // Fallback to default if opus not supported
+                    audioMediaRecorder = new MediaRecorder(audioStream);
+                }
+
+                let audioChunksSent = 0;
+                let audioChunksSkipped = 0;
+                audioMediaRecorder.ondataavailable = (event) => {
+                    if (event.data && event.data.size > 0 && socket.connected) {
+                        const now = Date.now();
+
+                        // Only send audio if we're within the 15-second window after voice detection
+                        if (now < audioSendUntil) {
+                            const reader = new FileReader();
+                            reader.onloadend = () => {
+                                socket.emit('audio-stream', reader.result);
+                                audioChunksSent++;
+                                if (audioChunksSent % 10 === 0) {
+                                    const remainingTime = Math.max(0, (audioSendUntil - now) / 1000);
+                                    console.log(`Audio: sent ${audioChunksSent} chunks (${event.data.size} bytes), ${remainingTime.toFixed(1)}s remaining`);
+                                }
+                            };
+                            reader.readAsDataURL(event.data);
+                        } else {
+                            // Skip sending this chunk
+                            audioChunksSkipped++;
+                            if (audioChunksSkipped % 20 === 1) {
+                                console.log(`Audio: skipped ${audioChunksSkipped} chunks (waiting for voice activity)`);
+                            }
+                        }
+                    }
+                };
+
+                // Send audio chunks every 500ms for smooth playback
+                audioMediaRecorder.start(500);
+            } catch (error) {
+                console.error('Error starting audio stream:', error);
+            }
+        }
+
+        // Stop camera and streaming
+        function stopCamera() {
+            if (streamingInterval) {
+                clearInterval(streamingInterval);
+                streamingInterval = null;
+            }
+
+            if (audioMediaRecorder && audioMediaRecorder.state !== 'inactive') {
+                audioMediaRecorder.stop();
+                audioMediaRecorder = null;
+            }
+
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+
+            video.srcObject = null;
+
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            switchBtn.disabled = true;
+
+            updateStatus('connected', 'Connected to server');
+        }
+
+        // Switch between front and back camera
+        async function switchCamera() {
+            currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+            stopCamera();
+            await startCamera();
+        }
+
+        // Event listeners
+        startBtn.addEventListener('click', startCamera);
+        stopBtn.addEventListener('click', stopCamera);
+        switchBtn.addEventListener('click', switchCamera);
+
+        // Check HTTPS on page load
+        function checkHTTPSOnLoad() {
+            const httpsWarning = document.getElementById('httpsWarning');
+            const httpsLink = document.getElementById('httpsLink');
+
+            if (!checkHTTPS()) {
+                // Replace HTTP port (3000) with HTTPS port (3443)
+                const hostname = window.location.hostname;
+                const httpsPort = 3443;
+                const httpsUrl = 'https://' + hostname + ':' + httpsPort + window.location.pathname;
+                httpsLink.href = httpsUrl;
+                httpsLink.textContent = httpsUrl;
+                httpsWarning.classList.add('show');
+
+                // Disable start button
+                startBtn.disabled = true;
+                startBtn.style.opacity = '0.5';
+            }
+        }
+
+        // Initialize
+        checkHTTPSOnLoad();
+        connectToServer();
+
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            stopCamera();
+            if (socket) {
+                socket.disconnect();
+            }
+        });
+    </script>
+</body>
+</html>
